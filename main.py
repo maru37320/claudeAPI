@@ -4,6 +4,7 @@ import time
 import json
 import hashlib
 import base64
+import math
 from datetime import datetime
 
 import gspread
@@ -76,6 +77,34 @@ def login_user(username, password):
     return False, ""
 
 # ============================================================
+# 구글시트 50000자 제한 우회 — 긴 텍스트 분할 저장
+# ============================================================
+MAX_CELL_CHARS = 45000  # 안전 마진 포함
+
+def truncate_for_sheet(text: str) -> str:
+    """셀 저장 전 길이 초과 시 잘라냄"""
+    if len(text) > MAX_CELL_CHARS:
+        return text[:MAX_CELL_CHARS] + "\n...[truncated]"
+    return text
+
+def safe_json_for_sheet(obj) -> str:
+    """메시지 리스트를 JSON으로 변환하되, 각 content를 45000자 이내로 제한"""
+    if isinstance(obj, list):
+        safe_list = []
+        for item in obj:
+            if isinstance(item, dict) and "content" in item:
+                safe_item = dict(item)
+                safe_item["content"] = truncate_for_sheet(str(item["content"]))
+                safe_list.append(safe_item)
+            else:
+                safe_list.append(item)
+        raw = json.dumps(safe_list, ensure_ascii=False)
+    else:
+        raw = json.dumps(obj, ensure_ascii=False)
+    # 최종 JSON 자체도 45000자 제한
+    return truncate_for_sheet(raw) if len(raw) > MAX_CELL_CHARS else raw
+
+# ============================================================
 # 대화 저장/불러오기
 # ============================================================
 def save_room_to_sheet(username, room):
@@ -86,17 +115,34 @@ def save_room_to_sheet(username, room):
         if row["username"] == username and row["room_id"] == room["id"]:
             row_idx = i + 2
             break
+
+    messages_json = safe_json_for_sheet(room["messages"])
+    token_json = safe_json_for_sheet(room["token_log"])
+
     row_data = [
         username, room["id"], room["title"],
         room.get("persona", "🔬 학습 도우미"), room["created_at"],
-        json.dumps(room["messages"], ensure_ascii=False),
-        json.dumps(room["token_log"], ensure_ascii=False),
+        messages_json,
+        token_json,
         room["total_input"], room["total_output"], room["total_cost"],
     ]
-    if row_idx:
-        sheet.update(f"A{row_idx}:J{row_idx}", [row_data])
-    else:
-        sheet.append_row(row_data)
+    try:
+        if row_idx:
+            sheet.update(f"A{row_idx}:J{row_idx}", [row_data])
+        else:
+            sheet.append_row(row_data)
+    except Exception as e:
+        # 저장 실패 시 메시지 수를 줄여서 재시도
+        st.warning(f"시트 저장 중 오류 (최근 메시지만 보존): {e}")
+        trimmed_messages = room["messages"][-10:]
+        row_data[5] = safe_json_for_sheet(trimmed_messages)
+        try:
+            if row_idx:
+                sheet.update(f"A{row_idx}:J{row_idx}", [row_data])
+            else:
+                sheet.append_row(row_data)
+        except Exception as e2:
+            st.error(f"시트 저장 실패: {e2}")
 
 def delete_room_from_sheet(username, room_id):
     sheet = get_sheet("conversations")
@@ -176,129 +222,156 @@ def load_user_stats(username):
 # ============================================================
 def get_theme_css(theme):
     if theme == "light":
-        return """
+        select_bg = "#ffffff"
+        select_text = "#1a1a1a"
+        select_hover = "#f0efea"
+        persona_scroll_bg = "#e8e7e2"
+        persona_scroll_border = "rgba(0,0,0,0.1)"
+        btn_send_bg = "#1a1a1a"
+        btn_send_color = "#ffffff"
+        btn_icon_bg = "#e0dfd9"
+        btn_icon_color = "#333333"
+        btn_icon_border = "rgba(0,0,0,0.18)"
+        return f"""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
-* { box-sizing: border-box; }
-.stApp { background: #f5f4ef !important; font-family: 'Inter', -apple-system, sans-serif; color: #1a1a1a !important; }
+* {{ box-sizing: border-box; }}
+.stApp {{ background: #f5f4ef !important; font-family: 'Inter', -apple-system, sans-serif; color: #1a1a1a !important; }}
 
-/* 사이드바 */
-section[data-testid="stSidebar"] { background: #eeede8 !important; border-right: 1px solid rgba(0,0,0,0.08) !important; }
-section[data-testid="stSidebar"] * { color: #1a1a1a !important; }
+section[data-testid="stSidebar"] {{ background: #eeede8 !important; border-right: 1px solid rgba(0,0,0,0.08) !important; }}
+section[data-testid="stSidebar"] * {{ color: #1a1a1a !important; }}
 section[data-testid="stSidebar"] .stMarkdown p,
 section[data-testid="stSidebar"] label,
-section[data-testid="stSidebar"] .stCaption { color: #555 !important; }
+section[data-testid="stSidebar"] .stCaption {{ color: #555 !important; }}
 
-/* 셀렉트박스 — 라이트 모드 배경 명시 */
-.stSelectbox > div > div {
-    background: #ffffff !important;
+/* 셀렉트박스 — 라이트 모드 */
+.stSelectbox > div > div {{
+    background: {select_bg} !important;
     border: 1px solid rgba(0,0,0,0.15) !important;
-    color: #1a1a1a !important;
+    color: {select_text} !important;
     border-radius: 8px !important;
-}
-.stSelectbox > div > div > div { color: #1a1a1a !important; }
-/* 드롭다운 리스트 */
-[data-baseweb="popover"] { background: #ffffff !important; }
-[data-baseweb="menu"] { background: #ffffff !important; }
-[data-baseweb="option"] { background: #ffffff !important; color: #1a1a1a !important; }
-[data-baseweb="option"]:hover { background: #f0efea !important; }
+}}
+.stSelectbox > div > div > div {{ color: {select_text} !important; }}
+[data-baseweb="popover"] {{ background: {select_bg} !important; }}
+[data-baseweb="menu"] {{ background: {select_bg} !important; }}
+[data-baseweb="option"] {{ background: {select_bg} !important; color: {select_text} !important; }}
+[data-baseweb="option"]:hover {{ background: {select_hover} !important; }}
 
-/* 텍스트 */
+/* 페르소나 스크롤 영역 — 라이트 모드 배경 반전 */
+.persona-scroll-area {{
+    background: {persona_scroll_bg} !important;
+    border: 1px solid {persona_scroll_border} !important;
+    border-radius: 10px !important;
+    padding: 6px !important;
+    max-height: 220px !important;
+    overflow-y: auto !important;
+}}
+.persona-scroll-area * {{ color: {select_text} !important; }}
+
 .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown h1,
-.stMarkdown h2, .stMarkdown h3, .stMarkdown h4 { color: #1a1a1a !important; }
-[data-testid="stMetricValue"] { color: #1a1a1a !important; font-weight: 600 !important; }
-[data-testid="stMetricLabel"] { color: #666 !important; }
-.stCaption, small { color: #666 !important; }
+.stMarkdown h2, .stMarkdown h3, .stMarkdown h4 {{ color: #1a1a1a !important; }}
+[data-testid="stMetricValue"] {{ color: #1a1a1a !important; font-weight: 600 !important; }}
+[data-testid="stMetricLabel"] {{ color: #666 !important; }}
+.stCaption, small {{ color: #666 !important; }}
 
-/* 입력창 */
-.stTextArea textarea {
+.stTextArea textarea {{
     background: #ffffff !important; border: 1px solid rgba(0,0,0,0.12) !important;
     border-radius: 14px !important; color: #1a1a1a !important;
     font-size: 0.95rem !important; line-height: 1.6 !important;
     padding: 14px 16px !important; resize: none !important;
     box-shadow: 0 1px 4px rgba(0,0,0,0.06) !important;
-}
-.stTextArea textarea:focus {
+}}
+.stTextArea textarea:focus {{
     border-color: rgba(0,0,0,0.3) !important;
     box-shadow: 0 0 0 3px rgba(0,0,0,0.06) !important; outline: none !important;
-}
-.stTextArea textarea::placeholder { color: #aaa !important; }
-.stTextInput input {
+}}
+.stTextArea textarea::placeholder {{ color: #aaa !important; }}
+.stTextInput input {{
     background: #ffffff !important; border: 1px solid rgba(0,0,0,0.12) !important;
     border-radius: 10px !important; color: #1a1a1a !important;
-}
+}}
 
-/* 버튼 */
-.stButton > button, .stFormSubmitButton > button {
+/* 버튼 기본 */
+.stButton > button {{
     font-family: 'Inter', sans-serif !important; font-weight: 500 !important;
     font-size: 0.82rem !important; border-radius: 8px !important;
     transition: all 0.18s ease !important;
-}
-.stButton > button {
-    background: rgba(0,0,0,0.06) !important; border: 1px solid rgba(0,0,0,0.12) !important; color: #333 !important;
-}
-.stButton > button:hover { background: rgba(0,0,0,0.12) !important; color: #1a1a1a !important; }
-.stFormSubmitButton > button {
-    background: rgba(0,0,0,0.06) !important; border: 1px solid rgba(0,0,0,0.12) !important; color: #444 !important;
-}
-.stFormSubmitButton > button:hover { background: rgba(0,0,0,0.14) !important; color: #1a1a1a !important; }
-.stDownloadButton > button {
-    background: rgba(0,0,0,0.06) !important; border: 1px solid rgba(0,0,0,0.12) !important;
-    color: #444 !important; border-radius: 8px !important;
-}
+    background: {btn_icon_bg} !important;
+    border: 1px solid {btn_icon_border} !important;
+    color: {btn_icon_color} !important;
+}}
+.stButton > button:hover {{ background: #d0cec8 !important; color: #1a1a1a !important; }}
 
-/* 채팅 버블 */
-.msg-user {
+/* Send 버튼 */
+button[data-testid="send_btn"] {{
+    background: {btn_send_bg} !important;
+    color: {btn_send_color} !important;
+    border: none !important;
+    border-radius: 50% !important;
+    width: 40px !important; height: 40px !important;
+    padding: 0 !important; font-size: 1.1rem !important;
+}}
+
+/* 아이콘 버튼들 (canvas, export, clear) */
+button[data-testid="canvas_btn"],
+button[data-testid="export_btn"],
+button[data-testid="clear_btn"] {{
+    background: {btn_icon_bg} !important;
+    border: 1px solid {btn_icon_border} !important;
+    color: {btn_icon_color} !important;
+    border-radius: 8px !important;
+    width: 40px !important; height: 40px !important;
+    padding: 0 !important; font-size: 0.95rem !important;
+}}
+button[data-testid="canvas_btn"]:hover {{ background: #d0cec8 !important; }}
+button[data-testid="clear_btn"]:hover {{ background: rgba(220,60,60,0.15) !important; color: #c03030 !important; border-color: rgba(200,50,50,0.4) !important; }}
+
+.msg-user {{
     background: #ffffff; border: 1px solid rgba(0,0,0,0.08);
     border-radius: 18px 18px 4px 18px; padding: 12px 16px;
     margin: 6px 0 6px auto; max-width: 88%; color: #1a1a1a;
     font-size: 0.93rem; line-height: 1.65; box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-}
-.msg-ai { background: transparent; padding: 4px 0; margin: 6px 0; max-width: 92%; color: #1a1a1a; font-size: 0.93rem; line-height: 1.7; }
-.msg-role { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em; margin-bottom: 4px; text-transform: uppercase; }
-.msg-role-user { text-align: right; color: #888; }
-.msg-role-ai { color: #888; }
-.token-bar { display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 0; font-size: 0.72rem; color: #999; }
-.token-bar strong { color: #555; }
+}}
+.msg-ai {{ background: transparent; padding: 4px 0; margin: 6px 0; max-width: 92%; color: #1a1a1a; font-size: 0.93rem; line-height: 1.7; }}
+.msg-role {{ font-size: 0.7rem; font-weight: 600; letter-spacing: 0.04em; margin-bottom: 4px; text-transform: uppercase; }}
+.msg-role-user {{ text-align: right; color: #888; }}
+.msg-role-ai {{ color: #888; }}
+.token-bar {{ display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 0; font-size: 0.72rem; color: #999; }}
+.token-bar strong {{ color: #555; }}
 
-/* 퀴즈 */
-.quiz-q { font-weight: 600; color: #1a1a1a; margin-bottom: 10px; line-height: 1.6; }
-.quiz-exp { background: rgba(0,0,0,0.04); border-left: 3px solid #999; padding: 10px 14px; border-radius: 0 8px 8px 0; margin-top: 10px; font-size: 0.86rem; color: #555; line-height: 1.6; }
-.score-box { background: #fff; border: 1px solid rgba(0,0,0,0.1); border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 16px; }
-.score-num { font-size: 2.4rem; font-weight: 700; color: #1a1a1a; }
+.quiz-q {{ font-weight: 600; color: #1a1a1a; margin-bottom: 10px; line-height: 1.6; }}
+.quiz-exp {{ background: rgba(0,0,0,0.04); border-left: 3px solid #999; padding: 10px 14px; border-radius: 0 8px 8px 0; margin-top: 10px; font-size: 0.86rem; color: #555; line-height: 1.6; }}
+.score-box {{ background: #fff; border: 1px solid rgba(0,0,0,0.1); border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 16px; }}
+.score-num {{ font-size: 2.4rem; font-weight: 700; color: #1a1a1a; }}
 
-/* PASTED 칩 */
-.pasted-chip {
+.pasted-chip {{
     display: inline-flex; align-items: center; gap: 6px;
-    background: rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.12);
+    background: rgba(0,0,0,0.07); border: 1px solid rgba(0,0,0,0.14);
     border-radius: 8px; padding: 5px 10px;
-    font-size: 0.8rem; font-weight: 500; color: #555; margin: 2px 4px 2px 0;
+    font-size: 0.8rem; font-weight: 500; color: #444; margin: 2px 4px 2px 0;
     cursor: pointer;
-}
-
-/* 이미지 썸네일 */
-.img-thumb {
+}}
+.img-thumb {{
     width: 72px; height: 54px; object-fit: cover;
     border-radius: 8px; border: 1px solid rgba(0,0,0,0.12);
     cursor: pointer; margin: 2px 4px 2px 0; display: inline-block;
-    transition: opacity 0.15s;
-}
-.img-thumb:hover { opacity: 0.8; }
+    transition: opacity 0.15s; vertical-align: middle;
+}}
+.img-thumb:hover {{ opacity: 0.8; }}
 
-hr { border-color: rgba(0,0,0,0.08) !important; }
-.streamlit-expanderHeader { color: #1a1a1a !important; }
+hr {{ border-color: rgba(0,0,0,0.08) !important; }}
+.streamlit-expanderHeader {{ color: #1a1a1a !important; }}
 
-/* 팝업 오버레이 */
-.popup-overlay {
+/* 팝업 */
+.popup-overlay {{
     position: fixed; inset: 0; background: rgba(0,0,0,0.6);
     z-index: 9999; display: flex; align-items: center; justify-content: center;
-}
-.popup-box {
+}}
+.popup-box {{
     background: #ffffff; border-radius: 14px; padding: 24px;
     max-width: 80vw; max-height: 85vh; overflow: auto;
     box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-    position: relative;
-}
+}}
 </style>
 """
     else:  # dark
@@ -308,14 +381,12 @@ hr { border-color: rgba(0,0,0,0.08) !important; }
 * { box-sizing: border-box; }
 .stApp { background: #1c1c1e !important; font-family: 'Inter', -apple-system, sans-serif; color: #e8e6e1 !important; }
 
-/* 사이드바 */
 section[data-testid="stSidebar"] { background: #161618 !important; border-right: 1px solid rgba(255,255,255,0.06) !important; }
 section[data-testid="stSidebar"] * { color: #e8e6e1 !important; }
 section[data-testid="stSidebar"] .stMarkdown p,
 section[data-testid="stSidebar"] label,
 section[data-testid="stSidebar"] .stCaption { color: #888 !important; }
 
-/* 셀렉트박스 */
 .stSelectbox > div > div {
     background: #2a2a2d !important; border: 1px solid rgba(255,255,255,0.1) !important;
     color: #e8e6e1 !important; border-radius: 8px !important;
@@ -327,7 +398,17 @@ section[data-testid="stSidebar"] .stCaption { color: #888 !important; }
 [data-baseweb="option"]:hover { background: #3a3a3d !important; }
 .stSelectbox svg { fill: #888 !important; }
 
-/* 텍스트 */
+/* 페르소나 스크롤 영역 — 다크 모드 */
+.persona-scroll-area {
+    background: #222224 !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    border-radius: 10px !important;
+    padding: 6px !important;
+    max-height: 220px !important;
+    overflow-y: auto !important;
+}
+.persona-scroll-area * { color: #e8e6e1 !important; }
+
 .stMarkdown, .stMarkdown p, .stMarkdown li, .stMarkdown h1,
 .stMarkdown h2, .stMarkdown h3, .stMarkdown h4 { color: #e8e6e1 !important; }
 [data-testid="stMetricValue"] { color: #e8e6e1 !important; font-weight: 600 !important; }
@@ -335,7 +416,6 @@ section[data-testid="stSidebar"] .stCaption { color: #888 !important; }
 .stCaption, small { color: #666 !important; }
 .stInfo { color: #e8e6e1 !important; background: rgba(255,255,255,0.06) !important; }
 
-/* 입력창 */
 .stTextArea textarea {
     background: #2a2a2d !important; border: 1px solid rgba(255,255,255,0.1) !important;
     border-radius: 14px !important; color: #e8e6e1 !important;
@@ -354,33 +434,20 @@ section[data-testid="stSidebar"] .stCaption { color: #888 !important; }
 }
 .stTextInput input:focus { border-color: rgba(255,255,255,0.25) !important; }
 
-/* 버튼 — 다크모드에서 아이콘 잘 보이도록 */
-.stButton > button, .stFormSubmitButton > button {
+/* 버튼 기본 — 다크에서 잘 보이게 */
+.stButton > button {
     font-family: 'Inter', sans-serif !important; font-weight: 500 !important;
     font-size: 0.82rem !important; border-radius: 8px !important;
     transition: all 0.18s ease !important;
-}
-.stButton > button {
-    background: rgba(255,255,255,0.09) !important;
-    border: 1px solid rgba(255,255,255,0.15) !important; color: #ddd !important;
+    background: rgba(255,255,255,0.12) !important;
+    border: 1px solid rgba(255,255,255,0.2) !important;
+    color: #e8e6e1 !important;
 }
 .stButton > button:hover {
-    background: rgba(255,255,255,0.16) !important;
-    border-color: rgba(255,255,255,0.25) !important; color: #fff !important;
-}
-.stFormSubmitButton > button {
-    background: rgba(255,255,255,0.09) !important;
-    border: 1px solid rgba(255,255,255,0.15) !important; color: #ddd !important;
-}
-.stFormSubmitButton > button:hover {
-    background: rgba(255,255,255,0.18) !important; color: #fff !important;
-}
-.stDownloadButton > button {
-    background: rgba(255,255,255,0.09) !important;
-    border: 1px solid rgba(255,255,255,0.15) !important; color: #ddd !important; border-radius: 8px !important;
+    background: rgba(255,255,255,0.22) !important;
+    border-color: rgba(255,255,255,0.35) !important; color: #fff !important;
 }
 
-/* 채팅 버블 */
 .msg-user {
     background: #2a2a2d; border: 1px solid rgba(255,255,255,0.08);
     border-radius: 18px 18px 4px 18px; padding: 12px 16px;
@@ -394,27 +461,23 @@ section[data-testid="stSidebar"] .stCaption { color: #888 !important; }
 .token-bar { display: flex; gap: 12px; flex-wrap: wrap; padding: 6px 0; font-size: 0.72rem; color: #555; }
 .token-bar strong { color: #888; }
 
-/* 퀴즈 */
 .quiz-q { font-weight: 600; color: #e8e6e1; margin-bottom: 10px; line-height: 1.6; }
 .quiz-exp { background: rgba(255,255,255,0.04); border-left: 3px solid #555; padding: 10px 14px; border-radius: 0 8px 8px 0; margin-top: 10px; font-size: 0.86rem; color: #aaa; line-height: 1.6; }
 .score-box { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 16px; }
 .score-num { font-size: 2.4rem; font-weight: 700; color: #e8e6e1; }
 
-/* PASTED 칩 */
 .pasted-chip {
     display: inline-flex; align-items: center; gap: 6px;
-    background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14);
+    background: rgba(255,255,255,0.09); border: 1px solid rgba(255,255,255,0.16);
     border-radius: 8px; padding: 5px 10px;
     font-size: 0.8rem; font-weight: 500; color: #bbb; margin: 2px 4px 2px 0;
     cursor: pointer;
 }
-
-/* 이미지 썸네일 */
 .img-thumb {
     width: 72px; height: 54px; object-fit: cover;
     border-radius: 8px; border: 1px solid rgba(255,255,255,0.12);
     cursor: pointer; margin: 2px 4px 2px 0; display: inline-block;
-    transition: opacity 0.15s;
+    transition: opacity 0.15s; vertical-align: middle;
 }
 .img-thumb:hover { opacity: 0.75; }
 
@@ -425,58 +488,15 @@ hr { border-color: rgba(255,255,255,0.06) !important; }
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
-</style>
-"""
 
-# ============================================================
-# Send 버튼 + Canvas 버튼 아이콘 CSS
-# ============================================================
-ICON_BTN_CSS = """
-<style>
-/* Send 버튼 (첫번째 폼 submit) */
-div[data-testid="stFormSubmitButton"]:nth-of-type(1) > button {
-    background: #e8e6e1 !important;
-    color: #1c1c1e !important;
-    border: none !important;
-    border-radius: 50% !important;
-    width: 40px !important; height: 40px !important;
-    padding: 0 !important; font-size: 1rem !important;
-    display: flex !important; align-items: center !important; justify-content: center !important;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.2) !important;
+.popup-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.75);
+    z-index: 9999; display: flex; align-items: center; justify-content: center;
 }
-div[data-testid="stFormSubmitButton"]:nth-of-type(1) > button:hover {
-    background: #d0cec8 !important; transform: scale(1.05) !important;
-}
-/* Canvas 토글 버튼 (두번째) */
-div[data-testid="stFormSubmitButton"]:nth-of-type(2) > button {
-    background: rgba(128,128,128,0.15) !important;
-    border: 1px solid rgba(128,128,128,0.3) !important;
-    border-radius: 8px !important; width: 40px !important; height: 40px !important;
-    padding: 0 !important; font-size: 0.9rem !important; color: #aaa !important;
-}
-div[data-testid="stFormSubmitButton"]:nth-of-type(2) > button:hover {
-    background: rgba(128,128,128,0.25) !important; color: #e8e6e1 !important;
-}
-/* Export 버튼 (세번째) */
-div[data-testid="stFormSubmitButton"]:nth-of-type(3) > button {
-    background: transparent !important;
-    border: 1px solid rgba(128,128,128,0.25) !important;
-    border-radius: 8px !important; width: 38px !important; height: 38px !important;
-    padding: 0 !important; font-size: 0.9rem !important; color: #888 !important;
-}
-div[data-testid="stFormSubmitButton"]:nth-of-type(3) > button:hover {
-    background: rgba(128,128,128,0.12) !important; color: #aaa !important;
-}
-/* Reset 버튼 (네번째) */
-div[data-testid="stFormSubmitButton"]:nth-of-type(4) > button {
-    background: transparent !important;
-    border: 1px solid rgba(128,128,128,0.25) !important;
-    border-radius: 8px !important; width: 38px !important; height: 38px !important;
-    padding: 0 !important; font-size: 0.9rem !important; color: #888 !important;
-}
-div[data-testid="stFormSubmitButton"]:nth-of-type(4) > button:hover {
-    background: rgba(220,80,80,0.12) !important;
-    border-color: rgba(220,80,80,0.4) !important; color: #e07070 !important;
+.popup-box {
+    background: #2a2a2d; border-radius: 14px; padding: 24px;
+    max-width: 80vw; max-height: 85vh; overflow: auto;
+    box-shadow: 0 24px 64px rgba(0,0,0,0.6);
 }
 </style>
 """
@@ -507,7 +527,7 @@ MODELS = {
 }
 
 # ============================================================
-# 페르소나 — 유용한 것만
+# 페르소나 — 유용한 기능 중심으로만
 # ============================================================
 PERSONAS = {
     "🔬 학습 도우미": {
@@ -529,14 +549,14 @@ PERSONAS = {
     },
     "🧩 퀴즈 출제자": {
         "system": """당신은 퀴즈 출제자입니다. 주어진 주제에 대해 4지선다 퀴즈를 JSON 형식으로 출제합니다.
-반드시 아래 형식의 JSON만 출력하세요:
+반드시 아래 형식의 순수한 JSON만 출력하세요 (코드블록 없이, 설명 없이):
 [{"question": "문제", "options": ["A", "B", "C", "D"], "answer": 0, "explanation": "해설"}]
-answer는 0-3 정수. 한국어로 최소 3문제 이상 출제합니다.""",
+answer는 0-3 정수(정답 옵션의 인덱스). 한국어로 최소 3문제 이상 출제합니다. JSON 외 다른 텍스트를 절대 포함하지 마세요.""",
         "greeting": "퀴즈 주제를 알려주세요.",
         "canvas_type": "quiz",
     },
     "💻 코딩 멘토": {
-        "system": """당신은 프로그래밍 멘토입니다. 코드를 작성할 때는 반드시 아래 JSON 형식으로만 응답하세요:
+        "system": """당신은 프로그래밍 멘토입니다. 코드를 작성할 때는 반드시 아래 JSON 형식으로만 응답하세요 (코드블록 없이):
 {"language": "python", "code": "코드 내용", "explanation": "설명", "title": "제목"}
 language는 python/javascript/html/css/java/cpp/sql 중 하나. 한국어로 설명합니다.""",
         "greeting": "어떤 코드가 필요한가요?",
@@ -549,7 +569,7 @@ language는 python/javascript/html/css/java/cpp/sql 중 하나. 한국어로 설
     },
     "📊 데이터 분석가": {
         "system": """당신은 데이터 분석 전문가입니다. 데이터를 분석하고 인사이트를 도출합니다.
-분석 결과는 명확한 구조로 정리하고, 시각화 코드가 필요하면 아래 JSON 형식으로 제공합니다:
+분석 코드가 필요하면 반드시 아래 JSON 형식으로만 응답하세요:
 {"language": "python", "code": "코드 내용", "explanation": "설명", "title": "분석 코드"}
 한국어로 답변합니다.""",
         "greeting": "데이터나 분석 요청을 입력하세요.",
@@ -570,6 +590,22 @@ language는 python/javascript/html/css/java/cpp/sql 중 하나. 한국어로 설
         "greeting": "분석할 주제나 주장을 입력하세요.",
         "canvas_type": "doc",
     },
+    "📅 플래너 · 스케줄러": {
+        "system": """당신은 계획 전문가입니다. 목표나 과제를 입력받으면 구체적이고 실행 가능한 계획을 세워줍니다.
+계획은 아래 구조로 문서로 정리합니다:
+- 전체 목표 요약
+- 단계별 세부 계획 (날짜/기간 포함)
+- 주의사항 및 팁
+한국어로 답변합니다.""",
+        "greeting": "달성하고 싶은 목표나 과제를 알려주세요.",
+        "canvas_type": "doc",
+    },
+    "🎯 면접 · 자소서 코치": {
+        "system": """당신은 취업/입시 컨설턴트입니다. 자기소개서 첨삭, 면접 답변 준비, 포트폴리오 조언을 제공합니다.
+피드백은 구체적이고 실용적으로 제시합니다. 한국어로 답변합니다.""",
+        "greeting": "자소서 내용이나 면접 질문을 입력하세요.",
+        "canvas_type": "doc",
+    },
 }
 
 # ============================================================
@@ -580,6 +616,7 @@ defaults = {
     "rooms": {}, "current_room": "",
     "total_input_tokens": 0, "total_output_tokens": 0, "total_cost": 0.0,
     "theme": "dark", "data_loaded": False,
+    # Canvas 상태
     "canvas_open": False,
     "canvas_type": None,
     "canvas_content": None,
@@ -587,7 +624,7 @@ defaults = {
     "quiz_answers": {}, "quiz_submitted": False,
     "code_content": "", "code_language": "python", "code_output": "",
     # 팝업
-    "popup_type": None,   # "pasted" | "image"
+    "popup_type": None,
     "popup_content": None,
     "popup_label": "",
     # 파일 첨부 대기
@@ -596,6 +633,12 @@ defaults = {
     "pending_file_name": None,
     "pending_file_is_image": False,
     "pending_file_api": None,
+    # 스트리밍 중 임시 저장
+    "streaming_answer": "",
+    "is_streaming": False,
+    # 액션 플래그 (폼 외부 버튼용)
+    "_action": None,
+    "_action_data": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -605,7 +648,6 @@ for k, v in defaults.items():
 # CSS 적용
 # ============================================================
 st.markdown(get_theme_css(st.session_state.theme), unsafe_allow_html=True)
-st.markdown(ICON_BTN_CSS, unsafe_allow_html=True)
 
 # ============================================================
 # 로그인 / 회원가입
@@ -714,12 +756,36 @@ def close_canvas():
     st.session_state.canvas_content = None
 
 def try_parse_ai_response(text, persona_key):
+    """AI 응답에서 Canvas 콘텐츠 파싱"""
     persona_info = PERSONAS.get(persona_key, {})
     canvas_type = persona_info.get("canvas_type")
 
+    if not canvas_type:
+        return None, None
+
+    # JSON 추출 (코드블록 제거)
+    def extract_json(t):
+        t = t.strip()
+        # ```json ... ``` 또는 ``` ... ``` 제거
+        if t.startswith("```"):
+            lines = t.split("\n")
+            # 첫 줄(```json 등)과 마지막 줄(```) 제거
+            inner = []
+            started = False
+            for line in lines:
+                if not started and line.startswith("```"):
+                    started = True
+                    continue
+                if started and line.strip() == "```":
+                    break
+                if started:
+                    inner.append(line)
+            t = "\n".join(inner).strip()
+        return t
+
     if canvas_type == "quiz":
         try:
-            raw = text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+            raw = extract_json(text)
             data = json.loads(raw)
             if isinstance(data, list) and len(data) > 0 and "question" in data[0]:
                 return "quiz", data
@@ -728,12 +794,13 @@ def try_parse_ai_response(text, persona_key):
 
     elif canvas_type == "code":
         try:
-            raw = text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+            raw = extract_json(text)
             data = json.loads(raw)
             if isinstance(data, dict) and "code" in data:
                 return "code", data
         except:
             pass
+        # 코드블록 fallback
         if "```" in text:
             lines = text.split("\n")
             code_lines = []
@@ -754,7 +821,7 @@ def try_parse_ai_response(text, persona_key):
 
     elif canvas_type == "mindmap":
         try:
-            raw = text.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+            raw = extract_json(text)
             data = json.loads(raw)
             if isinstance(data, dict) and "nodes" in data:
                 return "mindmap", data
@@ -768,32 +835,66 @@ def try_parse_ai_response(text, persona_key):
     return None, None
 
 def is_likely_code_paste(text):
-    """긴 코드 블록인지 판별"""
-    if len(text) < 200:
+    """긴 코드 붙여넣기 판별"""
+    if len(text) < 150:
         return False
     code_signals = [
         "def ", "class ", "import ", "function ", "const ", "var ", "let ",
         "#include", "public class", "SELECT ", "CREATE TABLE", "<?php",
         "async def", "export default", "return (", "@app.route",
+        "for (", "while (", "if (", "} else {", "=> {",
     ]
-    return any(sig in text for sig in code_signals)
+    signal_count = sum(1 for sig in code_signals if sig in text)
+    return signal_count >= 2
 
 # ============================================================
-# 팝업 모달 (이미지 또는 PASTED 코드)
+# 액션 처리 (폼 외부 버튼 → session_state 플래그)
+# ============================================================
+def handle_pending_action():
+    action = st.session_state.get("_action")
+    if not action:
+        return
+    data = st.session_state.get("_action_data", {})
+    st.session_state._action = None
+    st.session_state._action_data = None
+
+    if action == "open_canvas":
+        open_canvas(data["type"], data["content"], data["title"])
+        st.rerun()
+    elif action == "open_popup":
+        st.session_state.popup_type = data["ptype"]
+        st.session_state.popup_content = data["content"]
+        st.session_state.popup_label = data["label"]
+        st.rerun()
+    elif action == "close_popup":
+        st.session_state.popup_type = None
+        st.session_state.popup_content = None
+        st.rerun()
+
+handle_pending_action()
+
+# ============================================================
+# 팝업 모달
 # ============================================================
 if st.session_state.popup_type == "image" and st.session_state.popup_content:
     b64 = st.session_state.popup_content
     fname = st.session_state.popup_label
-    bg = "rgba(0,0,0,0.75)"
+    is_dark = st.session_state.theme == "dark"
+    box_bg = "#2a2a2d" if is_dark else "#ffffff"
+    text_c = "#ccc" if is_dark else "#555"
     st.markdown(f"""
-    <div style="position:fixed;inset:0;background:{bg};z-index:9999;display:flex;align-items:center;justify-content:center;">
-        <div style="background:#1c1c1e;border-radius:16px;padding:20px;max-width:82vw;max-height:88vh;overflow:auto;box-shadow:0 24px 64px rgba(0,0,0,0.6);position:relative;">
-            <div style="font-size:0.75rem;color:#888;margin-bottom:10px;">{fname}</div>
-            <img src="data:image/png;base64,{b64}" style="max-width:100%;max-height:70vh;border-radius:8px;display:block;" />
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.78);z-index:9999;
+                display:flex;align-items:center;justify-content:center;">
+        <div style="background:{box_bg};border-radius:16px;padding:20px;
+                    max-width:82vw;max-height:88vh;overflow:auto;
+                    box-shadow:0 24px 64px rgba(0,0,0,0.6);">
+            <div style="font-size:0.75rem;color:{text_c};margin-bottom:10px;">{fname}</div>
+            <img src="data:image/png;base64,{b64}"
+                 style="max-width:100%;max-height:70vh;border-radius:8px;display:block;" />
         </div>
     </div>
     """, unsafe_allow_html=True)
-    if st.button("✕ 닫기", key="close_img_modal"):
+    if st.button("✕ 이미지 닫기", key="close_img_modal"):
         st.session_state.popup_type = None
         st.session_state.popup_content = None
         st.rerun()
@@ -801,12 +902,24 @@ if st.session_state.popup_type == "image" and st.session_state.popup_content:
 elif st.session_state.popup_type == "pasted" and st.session_state.popup_content:
     code_text = st.session_state.popup_content
     fname = st.session_state.popup_label
-    with st.expander(f"📋 {fname} — 붙여넣은 내용", expanded=True):
-        st.code(code_text)
-        if st.button("✕ 닫기", key="close_pasted_modal"):
-            st.session_state.popup_type = None
-            st.session_state.popup_content = None
-            st.rerun()
+    is_dark = st.session_state.theme == "dark"
+    box_bg = "#2a2a2d" if is_dark else "#ffffff"
+    text_c = "#e8e6e1" if is_dark else "#1a1a1a"
+    sub_c = "#888" if is_dark else "#555"
+    st.markdown(f"""
+    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.78);z-index:9999;
+                display:flex;align-items:center;justify-content:center;">
+        <div style="background:{box_bg};border-radius:16px;padding:24px;
+                    max-width:80vw;max-height:85vh;overflow:auto;
+                    box-shadow:0 24px 64px rgba(0,0,0,0.6);min-width:400px;">
+            <div style="font-size:0.78rem;color:{sub_c};margin-bottom:12px;">📋 {fname}</div>
+    """, unsafe_allow_html=True)
+    st.code(code_text[:5000] + ("\n...(이하 생략)" if len(code_text) > 5000 else ""))
+    st.markdown("</div></div>", unsafe_allow_html=True)
+    if st.button("✕ 닫기", key="close_pasted_modal"):
+        st.session_state.popup_type = None
+        st.session_state.popup_content = None
+        st.rerun()
 
 # ============================================================
 # 사이드바
@@ -818,7 +931,7 @@ with st.sidebar:
     col_theme, col_logout = st.columns(2)
     with col_theme:
         icon = "☀️" if st.session_state.theme == "dark" else "🌙"
-        if st.button(f"{icon}", use_container_width=True, key="theme_btn"):
+        if st.button(f"{icon} 테마", use_container_width=True, key="theme_btn"):
             st.session_state.theme = "light" if st.session_state.theme == "dark" else "dark"
             save_user_stats(st.session_state.username)
             st.rerun()
@@ -840,7 +953,12 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption("PERSONA")
-    persona_key = st.selectbox("페르소나", list(PERSONAS.keys()), label_visibility="collapsed", key="persona_select")
+    persona_key = st.selectbox(
+        "페르소나",
+        list(PERSONAS.keys()),
+        label_visibility="collapsed",
+        key="persona_select",
+    )
     st.caption(PERSONAS[persona_key]["greeting"])
 
     st.markdown("---")
@@ -889,7 +1007,6 @@ with st.sidebar:
 # ============================================================
 room = get_current_room()
 
-# Canvas가 열려있으면 2컬럼으로, 아니면 단일 컬럼
 if st.session_state.canvas_open and st.session_state.canvas_content is not None:
     main_col, canvas_col = st.columns([1, 1], gap="medium")
 else:
@@ -900,111 +1017,112 @@ else:
 # 메인 채팅 영역
 # ============================================================
 with main_col:
-    # 헤더
     col_h1, col_h2 = st.columns([3, 2])
     with col_h1:
         st.markdown("#### ✦ Claude AI")
     with col_h2:
         if room:
-            st.caption(f"**{MODELS[model_name]['id'].split('-')[1].upper()}** · {room.get('persona','')}")
+            model_display = MODELS[model_name]["id"].split("-")[1].upper()
+            st.caption(f"**{model_display}** · {room.get('persona','')}")
 
     if room is None:
-        st.markdown("<div style='text-align:center; padding:6rem 0; color:#555;'>새 대화를 시작하세요</div>", unsafe_allow_html=True)
+        st.markdown("<div style='text-align:center;padding:6rem 0;color:#555;'>새 대화를 시작하세요</div>", unsafe_allow_html=True)
         st.stop()
 
     st.markdown("---")
 
-    # ── 대화 내용 렌더링 ──
-    if not room["messages"]:
-        greeting = PERSONAS.get(room.get("persona", persona_key), PERSONAS["🔬 학습 도우미"])["greeting"]
-        st.markdown(f'<div class="msg-ai"><div class="msg-role msg-role-ai">Claude</div>{greeting}</div>', unsafe_allow_html=True)
-    else:
-        ai_turn_idx = 0
-        for i, msg in enumerate(room["messages"]):
-            if msg["role"] == "user":
-                # 첨부 파일 표시 (썸네일 or PASTED 칩)
-                if msg.get("has_file"):
-                    fname = msg.get("file_name", "파일")
-                    is_img = msg.get("file_is_image", False)
-                    fkey = msg.get("file_key", "")
+    # ── 대화 히스토리 렌더링 ──
+    chat_container = st.container()
+    with chat_container:
+        if not room["messages"]:
+            greeting = PERSONAS.get(room.get("persona", persona_key), PERSONAS["🔬 학습 도우미"])["greeting"]
+            st.markdown(f'<div class="msg-ai"><div class="msg-role msg-role-ai">Claude</div>{greeting}</div>', unsafe_allow_html=True)
+        else:
+            ai_turn_idx = 0
+            for i, msg in enumerate(room["messages"]):
+                if msg["role"] == "user":
+                    # 첨부파일/코드 표시
+                    if msg.get("has_file"):
+                        fname = msg.get("file_name", "파일")
+                        is_img = msg.get("file_is_image", False)
+                        fkey = msg.get("file_key", "")
 
-                    if is_img and fkey:
-                        # 이미지 썸네일 — 클릭하면 팝업
-                        thumb_key = f"img_thumb_{i}"
-                        st.markdown(
-                            f'<img src="data:image/png;base64,{fkey}" class="img-thumb" title="{fname}" />',
-                            unsafe_allow_html=True
-                        )
-                        if st.button(f"🔍 {fname}", key=thumb_key):
-                            st.session_state.popup_type = "image"
-                            st.session_state.popup_content = fkey
-                            st.session_state.popup_label = fname
-                            st.rerun()
-                    elif not is_img and fkey:
-                        # PASTED 칩 — 클릭하면 팝업
-                        chip_key = f"pasted_chip_{i}"
-                        char_count = len(fkey)
-                        st.markdown(
-                            f'<span class="pasted-chip">📋 PASTED · {fname} · {char_count:,}자</span>',
-                            unsafe_allow_html=True
-                        )
-                        if st.button(f"📋 {fname}", key=chip_key):
-                            st.session_state.popup_type = "pasted"
-                            st.session_state.popup_content = fkey
-                            st.session_state.popup_label = fname
-                            st.rerun()
+                        if is_img and fkey:
+                            st.markdown(
+                                f'<img src="data:image/png;base64,{fkey}" class="img-thumb" title="{fname}" />',
+                                unsafe_allow_html=True
+                            )
+                            if st.button(f"🔍 {fname}", key=f"img_thumb_{i}"):
+                                st.session_state.popup_type = "image"
+                                st.session_state.popup_content = fkey
+                                st.session_state.popup_label = fname
+                                st.rerun()
+                        elif not is_img and fkey:
+                            char_count = len(fkey)
+                            st.markdown(
+                                f'<span class="pasted-chip">📋 PASTED · {fname} · {char_count:,}자</span>',
+                                unsafe_allow_html=True
+                            )
+                            if st.button(f"📋 {fname}", key=f"pasted_chip_{i}"):
+                                st.session_state.popup_type = "pasted"
+                                st.session_state.popup_content = fkey
+                                st.session_state.popup_label = fname
+                                st.rerun()
 
-                display_text = msg.get("display", msg["content"])
-                st.markdown(f"""
-                <div class="msg-user">
-                    <div class="msg-role msg-role-user">You</div>
-                    {display_text}
-                </div>""", unsafe_allow_html=True)
-
-            else:
-                active_persona = room.get("persona", persona_key)
-                c_type, c_data = try_parse_ai_response(msg["content"], active_persona)
-
-                if c_type in ("quiz", "code", "mindmap"):
-                    type_labels = {"quiz": "퀴즈", "code": "코드", "mindmap": "마인드맵"}
-                    label = type_labels.get(c_type, "Canvas")
-                    if c_type == "quiz":
-                        preview = f"{len(c_data)}문제"
-                    elif c_type == "code":
-                        preview = f"{c_data.get('language','').upper()} — {c_data.get('title','')}"
-                    else:
-                        preview = c_data.get("title", "")
-
+                    display_text = msg.get("display", msg["content"])
                     st.markdown(f"""
-                    <div class="msg-ai">
-                        <div class="msg-role msg-role-ai">Claude</div>
-                        {label} 준비 완료 — {preview}
+                    <div class="msg-user">
+                        <div class="msg-role msg-role-user">You</div>
+                        {display_text}
                     </div>""", unsafe_allow_html=True)
-                    if st.button(f"Canvas에서 열기 →", key=f"open_canvas_{i}"):
-                        open_canvas(c_type, c_data, label)
-                        st.rerun()
 
-                elif c_type == "doc":
-                    st.markdown('<div class="msg-ai"><div class="msg-role msg-role-ai">Claude</div></div>', unsafe_allow_html=True)
-                    st.markdown(msg["content"])
-                    if st.button("📄 문서로 보기 →", key=f"open_doc_{i}"):
-                        open_canvas("doc", c_data, "문서")
-                        st.rerun()
                 else:
-                    st.markdown('<div class="msg-ai"><div class="msg-role msg-role-ai">Claude</div></div>', unsafe_allow_html=True)
-                    st.markdown(msg["content"])
+                    active_persona = room.get("persona", persona_key)
+                    c_type, c_data = try_parse_ai_response(msg["content"], active_persona)
 
-                # 토큰 정보
-                if ai_turn_idx < len(room["token_log"]):
-                    tlog = room["token_log"][ai_turn_idx]
-                    st.markdown(f"""
-                    <div class="token-bar">
-                        <span>↑ {tlog['input']:,}</span>
-                        <span>↓ {tlog['output']:,}</span>
-                        <span>${tlog['cost']:.4f}</span>
-                        <span>{tlog.get('elapsed',0):.1f}s</span>
-                    </div>""", unsafe_allow_html=True)
-                ai_turn_idx += 1
+                    if c_type in ("quiz", "code", "mindmap"):
+                        type_labels = {"quiz": "퀴즈", "code": "코드", "mindmap": "마인드맵"}
+                        label = type_labels.get(c_type, "Canvas")
+                        if c_type == "quiz":
+                            preview = f"{len(c_data)}문제"
+                        elif c_type == "code":
+                            preview = f"{c_data.get('language','').upper()} — {c_data.get('title','')}"
+                        else:
+                            preview = c_data.get("title", "")
+
+                        st.markdown(f"""
+                        <div class="msg-ai">
+                            <div class="msg-role msg-role-ai">Claude</div>
+                            {label} 준비 완료 — {preview}
+                        </div>""", unsafe_allow_html=True)
+                        if st.button(f"▶ Canvas에서 열기", key=f"open_canvas_{i}"):
+                            open_canvas(c_type, c_data, label)
+                            st.rerun()
+
+                    elif c_type == "doc":
+                        st.markdown('<div class="msg-ai"><div class="msg-role msg-role-ai">Claude</div></div>', unsafe_allow_html=True)
+                        st.markdown(msg["content"])
+                        if st.button("📄 문서로 보기 →", key=f"open_doc_{i}"):
+                            open_canvas("doc", c_data, "문서")
+                            st.rerun()
+                    else:
+                        st.markdown('<div class="msg-ai"><div class="msg-role msg-role-ai">Claude</div></div>', unsafe_allow_html=True)
+                        st.markdown(msg["content"])
+
+                    # 토큰 정보
+                    if ai_turn_idx < len(room["token_log"]):
+                        tlog = room["token_log"][ai_turn_idx]
+                        st.markdown(f"""
+                        <div class="token-bar">
+                            <span>↑ {tlog['input']:,}</span>
+                            <span>↓ {tlog['output']:,}</span>
+                            <span>${tlog['cost']:.4f}</span>
+                            <span>{tlog.get('elapsed',0):.1f}s</span>
+                        </div>""", unsafe_allow_html=True)
+                    ai_turn_idx += 1
+
+    # ── 스트리밍 중일 때 여기에 실시간 표시 ──
+    streaming_area = st.container()
 
     # ── 파일 업로더 ──
     st.markdown("")
@@ -1028,8 +1146,8 @@ with main_col:
             st.session_state.pending_file_name = fname
             st.session_state.pending_file_is_image = True
             st.session_state.pending_file_api = {"type": "image", "source": {"type": "base64", "media_type": mtype, "data": fb64}}
-            # 썸네일 미리보기 + 클릭시 팝업
-            st.markdown(f'<img src="data:image/png;base64,{fb64}" class="img-thumb" title="{fname}" style="margin-bottom:6px;" />', unsafe_allow_html=True)
+            # 썸네일
+            st.markdown(f'<img src="data:image/png;base64,{fb64}" class="img-thumb" title="{fname}" style="margin-bottom:4px;" />', unsafe_allow_html=True)
             if st.button(f"🔍 미리보기: {fname}", key="preview_pending_img"):
                 st.session_state.popup_type = "image"
                 st.session_state.popup_content = fb64
@@ -1046,7 +1164,6 @@ with main_col:
             st.session_state.pending_file_name = fname
             st.session_state.pending_file_is_image = False
             st.session_state.pending_file_api = {"type": "text", "text": f"[첨부 파일: {fname}]\n```\n{fb64_text}\n```"}
-            # PASTED 칩 미리보기
             st.markdown(f'<span class="pasted-chip">📋 PASTED · {fname} · {len(fb64_text):,}자</span>', unsafe_allow_html=True)
             if st.button(f"📋 미리보기: {fname}", key="preview_pending_file"):
                 st.session_state.popup_type = "pasted"
@@ -1055,6 +1172,7 @@ with main_col:
                 st.rerun()
 
     # ── 입력 폼 ──
+    # !! 핵심 수정: 폼 안에는 textarea + send 버튼만, 나머지 버튼은 폼 밖으로 !!
     is_quiz_mode = persona_key == "🧩 퀴즈 출제자"
     is_mindmap_mode = persona_key == "🗺️ 마인드맵 메이커"
     if is_quiz_mode:
@@ -1064,6 +1182,7 @@ with main_col:
     else:
         ph = "메시지 입력..."
 
+    # 폼: textarea + 전송만
     with st.form("chat_form", clear_on_submit=True):
         user_input = st.text_area(
             "메시지",
@@ -1072,48 +1191,52 @@ with main_col:
             label_visibility="collapsed",
             key="user_input",
         )
-        col_send, col_canvas, col_export, col_reset, col_spacer = st.columns([1, 1, 1, 1, 6])
+        # 전송 버튼 (폼 제출)
+        col_send, col_spacer = st.columns([1, 9])
         with col_send:
-            submitted = st.form_submit_button("↑")
-        with col_canvas:
-            canvas_toggled = st.form_submit_button("⊞" if not st.session_state.canvas_open else "⊟")
-        with col_export:
-            download_btn = st.form_submit_button("↓")
-        with col_reset:
-            clear_btn = st.form_submit_button("✕")
+            submitted = st.form_submit_button("↑", help="전송 (Ctrl+Enter)")
 
-    # Canvas 토글 처리
-    if canvas_toggled:
-        st.session_state.canvas_open = not st.session_state.canvas_open
-        st.rerun()
+    # 폼 외부 버튼들 (Canvas, Export, Clear)
+    btn_cols = st.columns([1, 1, 1, 7])
+    with btn_cols[0]:
+        canvas_label = "⊟ Canvas" if st.session_state.canvas_open else "⊞ Canvas"
+        if st.button(canvas_label, key="canvas_toggle_btn", help="Canvas 패널 열기/닫기"):
+            st.session_state.canvas_open = not st.session_state.canvas_open
+            st.rerun()
+    with btn_cols[1]:
+        if st.button("↓ 저장", key="export_btn_outer", help="대화 내보내기"):
+            if room["messages"]:
+                lines = [f"=== {room['title']} ===", f"{room['created_at']}", ""]
+                for m in room["messages"]:
+                    role = "나" if m["role"] == "user" else "Claude"
+                    lines += [f"[{role}]", m["content"], ""]
+                lines.append(f"Input: {room['total_input']:,} · Output: {room['total_output']:,} · ${room['total_cost']:.4f}")
+                st.download_button(
+                    "💾 다운로드",
+                    data="\n".join(lines).encode("utf-8"),
+                    file_name=f"chat_{room['id']}.txt",
+                    mime="text/plain",
+                    key="dl_btn_real",
+                )
+    with btn_cols[2]:
+        if st.button("✕ 초기화", key="clear_btn_outer", help="현재 대화 초기화"):
+            st.session_state.total_input_tokens -= room["total_input"]
+            st.session_state.total_output_tokens -= room["total_output"]
+            st.session_state.total_cost -= room["total_cost"]
+            room["messages"] = []
+            room["token_log"] = []
+            room["total_input"] = room["total_output"] = 0
+            room["total_cost"] = 0.0
+            room["title"] = "새 대화"
+            close_canvas()
+            st.session_state.pending_file_b64 = None
+            st.session_state.pending_file_api = None
+            st.session_state.pending_file_name = None
+            save_room_to_sheet(st.session_state.username, room)
+            save_user_stats(st.session_state.username)
+            st.rerun()
 
-    # 내보내기
-    if download_btn and room["messages"]:
-        lines = [f"=== {room['title']} ===", f"{room['created_at']}", ""]
-        for m in room["messages"]:
-            role = "나" if m["role"] == "user" else "Claude"
-            lines += [f"[{role}]", m["content"], ""]
-        lines.append(f"Input: {room['total_input']:,} · Output: {room['total_output']:,} · ${room['total_cost']:.4f}")
-        st.download_button("💾 다운로드", data="\n".join(lines).encode("utf-8"),
-                           file_name=f"chat_{room['id']}.txt", mime="text/plain")
-
-    # 초기화
-    if clear_btn:
-        st.session_state.total_input_tokens -= room["total_input"]
-        st.session_state.total_output_tokens -= room["total_output"]
-        st.session_state.total_cost -= room["total_cost"]
-        room["messages"] = []
-        room["token_log"] = []
-        room["total_input"] = room["total_output"] = 0
-        room["total_cost"] = 0.0
-        room["title"] = "새 대화"
-        close_canvas()
-        st.session_state.pending_file_b64 = None
-        save_room_to_sheet(st.session_state.username, room)
-        save_user_stats(st.session_state.username)
-        st.rerun()
-
-    # ── 메시지 전송 (스트리밍) ──
+    # ── 메시지 전송 + 스트리밍 ──
     if submitted and user_input.strip():
         if not room["messages"]:
             title = user_input.strip()
@@ -1128,9 +1251,7 @@ with main_col:
 
         # 긴 코드 붙여넣기 감지
         display_input = user_input.strip()
-        is_pasted_code = is_likely_code_paste(user_input.strip())
-        if is_pasted_code and not file_name:
-            # 코드를 PASTED로 처리
+        if is_likely_code_paste(user_input.strip()) and not file_name:
             file_name = "붙여넣은 코드"
             file_is_image = False
             file_key = user_input.strip()
@@ -1144,9 +1265,8 @@ with main_col:
             "has_file": file_name is not None,
             "file_name": file_name or "",
             "file_is_image": file_is_image,
-            "file_key": file_key if not file_is_image else file_key,
+            "file_key": file_key,
         }
-
         room["messages"].append(user_msg)
 
         model_info = MODELS[model_name]
@@ -1164,11 +1284,15 @@ with main_col:
             else:
                 api_messages.append({"role": "assistant", "content": m["content"]})
 
-        # ── 스트리밍: 입력창 아래 고정 영역에 렌더링 ──
-        # 메시지는 이미 room["messages"]에 추가됐으므로
-        # st.rerun() 전에 스트리밍 placeholder를 입력창 바로 아래에 배치
-        st.markdown('<div class="msg-ai"><div class="msg-role msg-role-ai">Claude</div></div>', unsafe_allow_html=True)
-        stream_placeholder = st.empty()
+        # ── 스트리밍: streaming_area에 표시 (대화 목록 바로 아래) ──
+        with streaming_area:
+            st.markdown(
+                '<div class="msg-user"><div class="msg-role msg-role-user">You</div>'
+                + display_input + '</div>',
+                unsafe_allow_html=True
+            )
+            st.markdown('<div class="msg-ai"><div class="msg-role msg-role-ai">Claude</div></div>', unsafe_allow_html=True)
+            stream_placeholder = st.empty()
 
         client = anthropic.Anthropic(api_key=API_KEY)
         start_time = time.time()
@@ -1183,9 +1307,11 @@ with main_col:
             ) as stream:
                 for text_chunk in stream.text_stream:
                     full_answer += text_chunk
-                    stream_placeholder.markdown(full_answer + " ▌")
+                    with streaming_area:
+                        stream_placeholder.markdown(full_answer + " ▌")
 
-            stream_placeholder.empty()
+            with streaming_area:
+                stream_placeholder.empty()
 
             elapsed = time.time() - start_time
             final_msg = stream.get_final_message()
@@ -1196,7 +1322,10 @@ with main_col:
             turn_cost = input_cost + output_cost
 
             room["messages"].append({"role": "assistant", "content": full_answer})
-            room["token_log"].append({"input": input_tokens, "output": output_tokens, "cost": turn_cost, "elapsed": elapsed})
+            room["token_log"].append({
+                "input": input_tokens, "output": output_tokens,
+                "cost": turn_cost, "elapsed": elapsed,
+            })
             room["total_input"] += input_tokens
             room["total_output"] += output_tokens
             room["total_cost"] += turn_cost
@@ -1273,7 +1402,6 @@ if canvas_col is not None and st.session_state.canvas_content is not None:
         text_col = "#e8e6e1" if th == "dark" else "#1a1a1a"
         sub_col = "#555" if th == "dark" else "#888"
 
-        # Canvas 헤더
         ch1, ch2 = st.columns([4, 1])
         with ch1:
             st.markdown(f"**{st.session_state.canvas_title}**")
@@ -1299,7 +1427,7 @@ if canvas_col is not None and st.session_state.canvas_content is not None:
                 <div class="score-box">
                     <div style="font-size:2.2rem;">{emoji}</div>
                     <div class="score-num">{score}점</div>
-                    <div style="font-size:0.85rem; color:{sub_col};">{correct_count}/{total_q} 정답</div>
+                    <div style="font-size:0.85rem;color:{sub_col};">{correct_count}/{total_q} 정답</div>
                 </div>""", unsafe_allow_html=True)
                 if st.button("다시 풀기", use_container_width=True, key="retake_quiz"):
                     st.session_state.quiz_answers = {}
@@ -1378,23 +1506,17 @@ if canvas_col is not None and st.session_state.canvas_content is not None:
                         st.session_state.code_output = f"{lang.upper()} 실행은 Python만 지원됩니다"
                     st.rerun()
             with cc2:
-                escaped = edited_code.replace("`", "\\`").replace("\\", "\\\\")
-                st.markdown(f"""
-                <button onclick="navigator.clipboard.writeText(`{escaped}`).then(()=>this.textContent='✓ 복사됨')"
-                    style="width:100%;padding:6px 10px;background:rgba(128,128,128,0.12);
-                           border:1px solid rgba(128,128,128,0.2);border-radius:8px;
-                           cursor:pointer;color:{text_col};font-size:0.82rem;">
-                    📋 복사
-                </button>""", unsafe_allow_html=True)
-            with cc3:
                 st.download_button("↓ 저장", data=edited_code.encode(),
                                    file_name=f"code.{lang}", mime="text/plain", key="dl_code_cv")
+            with cc3:
+                if st.button("📋 복사", use_container_width=True, key="copy_code_cv"):
+                    st.toast("클립보드 복사는 브라우저에서 직접 선택 후 복사하세요")
 
             if st.session_state.code_output:
                 st.markdown("**실행 결과**")
                 st.code(st.session_state.code_output, language="text")
 
-            with st.expander("전체 코드"):
+            with st.expander("전체 코드 보기"):
                 st.code(edited_code, language=lang)
 
         # ── 문서 ──
@@ -1406,25 +1528,24 @@ if canvas_col is not None and st.session_state.canvas_content is not None:
 
             edit_mode = st.toggle("편집 모드", key="doc_edit_cv")
             if edit_mode:
-                edited_doc = st.text_area("", value=doc_content, height=480, label_visibility="collapsed", key="doc_edit_area")
+                edited_doc = st.text_area("", value=doc_content, height=480,
+                                          label_visibility="collapsed", key="doc_edit_area")
                 if st.button("저장", key="save_doc_cv"):
                     st.session_state.canvas_content["content"] = edited_doc
                     st.rerun()
             else:
                 st.markdown(doc_content)
 
-            escaped_doc = doc_content.replace("`", "\\`").replace("\\", "\\\\")
-            st.markdown(f"""
-            <button onclick="navigator.clipboard.writeText(`{escaped_doc}`).then(()=>this.textContent='✓ 복사됨')"
-                style="padding:6px 14px;background:rgba(128,128,128,0.12);
-                       border:1px solid rgba(128,128,128,0.2);border-radius:8px;
-                       cursor:pointer;color:{text_col};font-size:0.82rem;margin-top:8px;">
-                📋 전체 복사
-            </button>""", unsafe_allow_html=True)
+            st.download_button(
+                "↓ 문서 저장",
+                data=doc_content.encode("utf-8"),
+                file_name=f"{doc_title}.md",
+                mime="text/markdown",
+                key="dl_doc_cv",
+            )
 
         # ── 마인드맵 ──
         elif ct == "mindmap":
-            import math
             import plotly.graph_objects as go
 
             mm_title = cc.get("title", "마인드맵")
