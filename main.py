@@ -24,31 +24,23 @@ SCOPES = [
 
 @st.cache_resource
 def get_gsheet_connection():
-    # 변경 후
-import json
-
-gcp_info = {
-    "type": st.secrets["type"],
-    "project_id": st.secrets["project_id"],
-    "private_key_id": st.secrets["private_key_id"],
-    "private_key": st.secrets["private_key"],
-    "client_email": st.secrets["client_email"],
-    "client_id": st.secrets["client_id"],
-    "auth_uri": st.secrets["auth_uri"],
-    "token_uri": st.secrets["token_uri"],
-    "auth_provider_x509_cert_url": st.secrets["auth_provider_x509_cert_url"],
-    "client_x509_cert_url": st.secrets["client_x509_cert_url"],
-    "universe_domain": st.secrets["universe_domain"],
-}
-
-credentials = Credentials.from_service_account_info(gcp_info, scopes=SCOPES)
+    gcp_info = {
+        "type": st.secrets["type"],
+        "project_id": st.secrets["project_id"],
+        "private_key_id": st.secrets["private_key_id"],
+        "private_key": st.secrets["private_key"],
+        "client_email": st.secrets["client_email"],
+        "client_id": st.secrets["client_id"],
+        "auth_uri": st.secrets["auth_uri"],
+        "token_uri": st.secrets["token_uri"],
+        "auth_provider_x509_cert_url": st.secrets["auth_provider_x509_cert_url"],
+        "client_x509_cert_url": st.secrets["client_x509_cert_url"],
+        "universe_domain": st.secrets["universe_domain"],
+    }
+    credentials = Credentials.from_service_account_info(gcp_info, scopes=SCOPES)
     client = gspread.authorize(credentials)
     spreadsheet = client.open_by_url(st.secrets["SPREADSHEET_URL"])
     return spreadsheet
-
-def get_sheet(name):
-    sp = get_gsheet_connection()
-    return sp.worksheet(name)
 
 # ============================================================
 # 유저 관리 (Google Sheets)
