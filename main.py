@@ -42,6 +42,10 @@ def get_gsheet_connection():
     spreadsheet = client.open_by_url(st.secrets["SPREADSHEET_URL"])
     return spreadsheet
 
+def get_sheet(sheet_name):
+    spreadsheet = get_gsheet_connection()
+    return spreadsheet.worksheet(sheet_name)
+    
 # ============================================================
 # 유저 관리 (Google Sheets)
 # ============================================================
