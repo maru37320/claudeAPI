@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import anthropic
 import time
 import json
@@ -232,8 +233,69 @@ def load_user_stats(username):
 # 테마 CSS
 # ============================================================
 def get_theme_css(theme):
+    # sticky canvas + overlay popup 공통 JS/CSS
+    common_js_css = """
+<style>
+/* ── Canvas sticky: JS가 주입한 후 적용될 스타일 ── */
+.canvas-sticky-col {
+    position: sticky !important;
+    top: 0 !important;
+    height: 100vh !important;
+    overflow-y: auto !important;
+    align-self: flex-start !important;
+}
+/* ── Overlay popup ── */
+#claude-popup-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 999999;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(6px);
+}
+#claude-popup-overlay.active {
+    display: flex;
+}
+#claude-popup-box {
+    border-radius: 16px;
+    padding: 28px;
+    max-width: 88vw;
+    min-width: 320px;
+    max-height: 90vh;
+    overflow-y: auto;
+    position: relative;
+    box-shadow: 0 32px 64px rgba(0,0,0,0.5);
+    animation: popIn 0.18s ease;
+}
+@keyframes popIn {
+    from { opacity:0; transform: scale(0.94) translateY(12px); }
+    to   { opacity:1; transform: scale(1)    translateY(0);    }
+}
+#claude-popup-close {
+    position: absolute; top: 14px; right: 16px;
+    background: none; border: none;
+    font-size: 1.3rem; cursor: pointer; padding: 2px 6px;
+    border-radius: 6px; line-height: 1;
+    transition: background 0.15s;
+}
+#claude-popup-title {
+    font-size: 0.88rem; font-weight: 600;
+    margin-bottom: 16px; margin-right: 32px;
+}
+#claude-popup-img { max-width: 100%; max-height: 72vh; border-radius: 8px; display: block; }
+#claude-popup-code {
+    font-size: 0.82rem; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-all;
+    overflow-x: auto; padding: 12px;
+    border-radius: 8px; margin: 0;
+    max-height: 68vh; overflow-y: auto;
+}
+</style>
+"""
+
     if theme == "light":
-        return """
+        theme_vars = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
 * { box-sizing: border-box; }
@@ -285,7 +347,6 @@ section[data-testid="stSidebar"] [data-baseweb="select"] input { pointer-events:
 .score-num { font-size: 2.4rem; font-weight: 700; color: #1a1a1a; }
 
 .pasted-chip { display: inline-flex; align-items: center; gap: 6px; background: rgba(0,0,0,0.06); border: 1px solid rgba(0,0,0,0.12); border-radius: 8px; padding: 5px 10px; font-size: 0.8rem; font-weight: 500; color: #333; margin: 2px 4px 2px 0; cursor: pointer; }
-
 .img-thumb { width: 72px; height: 54px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(0,0,0,0.12); cursor: pointer; margin: 2px 4px 2px 0; display: inline-block; transition: opacity 0.15s; vertical-align: middle; }
 .img-thumb:hover { opacity: 0.8; }
 
@@ -294,10 +355,18 @@ hr { border-color: rgba(0,0,0,0.08) !important; }
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 3px; }
+
+/* popup light */
+#claude-popup-overlay { background: rgba(0,0,0,0.55); }
+#claude-popup-box { background: #ffffff; }
+#claude-popup-close { color: #333; }
+#claude-popup-close:hover { background: rgba(0,0,0,0.08); }
+#claude-popup-title { color: #1a1a1a; }
+#claude-popup-code { background: #f5f4ef; color: #1a1a1a; }
 </style>
 """
     else:
-        return """
+        theme_vars = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap');
 * { box-sizing: border-box; }
@@ -352,7 +421,6 @@ section[data-testid="stSidebar"] [data-baseweb="select"] input { pointer-events:
 .score-num { font-size: 2.4rem; font-weight: 700; color: #e8e6e1; }
 
 .pasted-chip { display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.14); border-radius: 8px; padding: 5px 10px; font-size: 0.8rem; font-weight: 500; color: #bbb; margin: 2px 4px 2px 0; cursor: pointer; }
-
 .img-thumb { width: 72px; height: 54px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); cursor: pointer; margin: 2px 4px 2px 0; display: inline-block; transition: opacity 0.15s; vertical-align: middle; }
 .img-thumb:hover { opacity: 0.75; }
 
@@ -363,8 +431,80 @@ hr { border-color: rgba(255,255,255,0.06) !important; }
 ::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+
+/* popup dark */
+#claude-popup-overlay { background: rgba(0,0,0,0.80); }
+#claude-popup-box { background: #2a2a2d; }
+#claude-popup-close { color: #ccc; }
+#claude-popup-close:hover { background: rgba(255,255,255,0.1); }
+#claude-popup-title { color: #e8e6e1; }
+#claude-popup-code { background: #1c1c1e; color: #e8e6e1; }
 </style>
 """
+    return common_js_css + theme_vars
+
+
+# ============================================================
+# 팝업 HTML (페이지에 한 번만 삽입, JS로 제어)
+# ============================================================
+POPUP_HTML = """
+<div id="claude-popup-overlay" onclick="if(event.target===this)closePopup()">
+  <div id="claude-popup-box">
+    <button id="claude-popup-close" onclick="closePopup()">✕</button>
+    <div id="claude-popup-title"></div>
+    <div id="claude-popup-body"></div>
+  </div>
+</div>
+<script>
+function openPopup(type, b64, label) {
+    var overlay = document.getElementById('claude-popup-overlay');
+    var title   = document.getElementById('claude-popup-title');
+    var body    = document.getElementById('claude-popup-body');
+    title.textContent = label;
+    body.innerHTML = '';
+    if (type === 'image') {
+        var img = document.createElement('img');
+        img.id  = 'claude-popup-img';
+        img.src = 'data:image/png;base64,' + b64;
+        body.appendChild(img);
+    } else {
+        var pre = document.createElement('pre');
+        pre.id  = 'claude-popup-code';
+        pre.textContent = atob(b64).substring(0, 8000);
+        body.appendChild(pre);
+    }
+    overlay.classList.add('active');
+    document.addEventListener('keydown', escClose);
+}
+function closePopup() {
+    document.getElementById('claude-popup-overlay').classList.remove('active');
+    document.removeEventListener('keydown', escClose);
+}
+function escClose(e) { if (e.key === 'Escape') closePopup(); }
+</script>
+"""
+
+# Canvas sticky JS — Canvas 컬럼에 sticky 적용
+CANVAS_STICKY_JS = """
+<script>
+(function applySticky() {
+    var doc = window.parent ? window.parent.document : document;
+    // Streamlit columns: data-testid="column" 요소들
+    var cols = doc.querySelectorAll('[data-testid="column"]');
+    if (cols.length >= 2) {
+        var last = cols[cols.length - 1];
+        last.style.position   = 'sticky';
+        last.style.top        = '0';
+        last.style.height     = '100vh';
+        last.style.overflowY  = 'auto';
+        last.style.alignSelf  = 'flex-start';
+    } else {
+        setTimeout(applySticky, 200);
+    }
+})();
+</script>
+"""
+
 
 # ============================================================
 # API 키
@@ -492,12 +632,9 @@ defaults = {
     "canvas_title": "Canvas",
     "quiz_answers": {}, "quiz_submitted": False,
     "code_content": "", "code_language": "python",
-    # 팝업 상태 — streamlit 위젯으로만 관리 (HTML overlay 없음)
-    "popup_type": None,
-    "popup_content": None,
-    "popup_label": "",
-    # 파일 첨부
     "pending_files": [],
+    # FIX: 파일 업로더 리셋용 키 카운터
+    "upload_key": 0,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -507,6 +644,13 @@ for k, v in defaults.items():
 # CSS 적용
 # ============================================================
 st.markdown(get_theme_css(st.session_state.theme), unsafe_allow_html=True)
+
+# ============================================================
+# FIX: 팝업 오버레이 HTML을 페이지에 한 번만 삽입
+# st.rerun() 후에도 DOM에 남아있어야 하므로 최상단에 배치
+# ============================================================
+st.markdown(POPUP_HTML, unsafe_allow_html=True)
+
 
 # ============================================================
 # 로그인 / 회원가입
@@ -543,10 +687,10 @@ if not st.session_state.logged_in:
     with tab_register:
         with st.form("register_form"):
             reg_name = st.text_input("이름", key="reg_name")
-            reg_id = st.text_input("아이디", key="reg_id")
-            reg_pw = st.text_input("비밀번호", type="password", key="reg_pw")
-            reg_pw2 = st.text_input("비밀번호 확인", type="password", key="reg_pw2")
-            reg_btn = st.form_submit_button("가입하기", use_container_width=True)
+            reg_id   = st.text_input("아이디", key="reg_id")
+            reg_pw   = st.text_input("비밀번호", type="password", key="reg_pw")
+            reg_pw2  = st.text_input("비밀번호 확인", type="password", key="reg_pw2")
+            reg_btn  = st.form_submit_button("가입하기", use_container_width=True)
         if reg_btn:
             if not all([reg_name, reg_id, reg_pw, reg_pw2]):
                 st.warning("모든 항목을 입력하세요.")
@@ -632,7 +776,6 @@ def try_parse_ai_response(text, persona_key):
                 return "quiz", data
         except:
             pass
-
     elif canvas_type == "code":
         try:
             raw = text.strip()
@@ -643,13 +786,11 @@ def try_parse_ai_response(text, persona_key):
                 return "code", data
         except:
             pass
-        # 코드블록 추출
         match = re.search(r"```(\w+)?\n(.*?)```", text, re.DOTALL)
         if match:
             lang = match.group(1) or "python"
             code = match.group(2)
             return "code", {"code": code, "language": lang, "explanation": "", "title": "코드"}
-
     elif canvas_type == "mindmap":
         try:
             raw = text.strip()
@@ -660,7 +801,6 @@ def try_parse_ai_response(text, persona_key):
                 return "mindmap", data
         except:
             pass
-
     elif canvas_type == "doc":
         if len(text) > 300:
             return "doc", {"content": text, "title": "문서"}
@@ -668,21 +808,11 @@ def try_parse_ai_response(text, persona_key):
     return None, None
 
 
-# ============================================================
-# FIX: 코드블록 파싱 — 정규식 기반으로 완전히 재작성
-# 문제: 이전 split("```") 방식은 코드 내부의 특수문자(=, #, "")에 취약
-# ============================================================
 def parse_code_blocks(text):
-    """
-    텍스트를 텍스트/코드 파트로 분리.
-    반환: [("text", str), ("code", str, lang), ...]
-    정규식으로 ```lang\n...``` 블록을 한 번에 매칭해서 쪼개짐 방지.
-    """
     parts = []
     pattern = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
     last_end = 0
     for m in pattern.finditer(text):
-        # 블록 이전 텍스트
         pre = text[last_end:m.start()]
         if pre:
             parts.append(("text", pre))
@@ -690,7 +820,6 @@ def parse_code_blocks(text):
         code = m.group(2)
         parts.append(("code", code, lang))
         last_end = m.end()
-    # 남은 텍스트
     tail = text[last_end:]
     if tail:
         parts.append(("text", tail))
@@ -730,25 +859,12 @@ def render_ai_message_content(text, msg_index, persona_key, room):
             code_idx += 1
 
 
-# ============================================================
-# FIX: PASTED 처리 — 정규식으로 ``` ``` 블록만 정확히 추출
-# 나머지 텍스트는 일반 텍스트로, display에도 깔끔하게 표시
-# ============================================================
 def process_user_input(raw_input, existing_pending):
-    """
-    사용자 입력을 처리하여:
-    - plain_text_for_api: API에 보낼 텍스트 (코드블록 제거됨)
-    - display_text: 화면에 표시할 텍스트
-    - extra_pending: 추가로 생성된 PASTED 항목들
-    """
     extra_pending = []
-
-    # ``` ... ``` 블록을 정규식으로 한 번에 추출
     code_block_pattern = re.compile(r"```(\w*)\n?(.*?)```", re.DOTALL)
     blocks = list(code_block_pattern.finditer(raw_input))
 
     if not blocks:
-        # 코드블록 없음 → 코드 붙여넣기 자동 감지
         if is_likely_code_paste(raw_input):
             extra_pending.append({
                 "name": "붙여넣은 코드",
@@ -761,7 +877,6 @@ def process_user_input(raw_input, existing_pending):
         else:
             return raw_input, raw_input, extra_pending
 
-    # 코드블록이 있는 경우: 블록을 PASTED로 변환, 나머지 텍스트만 남김
     text_parts = []
     last_end = 0
     pasted_count = 0
@@ -789,9 +904,7 @@ def process_user_input(raw_input, existing_pending):
         text_parts.append(tail)
 
     plain_text = " ".join(text_parts) if text_parts else "(코드 첨부됨)"
-    display_text = plain_text
-
-    return plain_text, display_text, extra_pending
+    return plain_text, plain_text, extra_pending
 
 
 def is_likely_code_paste(text):
@@ -803,46 +916,39 @@ def is_likely_code_paste(text):
         "async def", "export default", "return (", "@app.route",
         "from ", "require(", "module.exports",
     ]
-    signal_count = sum(1 for s in code_signals if s in text)
-    return signal_count >= 2
+    return sum(1 for s in code_signals if s in text) >= 2
 
 
 # ============================================================
-# 팝업 — Streamlit 컨테이너 기반 (HTML overlay 완전 제거)
-# 이전 방식(HTML fixed div + CSS has() selector)은 닫기 버튼을
-# 페이지 맨 위/아래로 밀어버리는 버그 발생 → st.container()로 교체
+# FIX: JS 팝업 트리거 함수
+# st.rerun() 없이 순수 JS로 오버레이 표시
+# b64 데이터를 JS에 직접 전달 → fixed overlay가 올바르게 뜸
 # ============================================================
-def render_popup():
-    """팝업이 열려있으면 화면 상단에 컨테이너로 표시."""
-    if st.session_state.popup_type is None:
-        return
+def trigger_popup_js(popup_type, b64_data, label):
+    """
+    HTML/JS로 팝업을 즉시 표시.
+    - popup_type: 'image' | 'pasted'
+    - b64_data: base64 문자열 (이미지) 또는 일반 텍스트
+    - label: 팝업 제목
+    """
+    safe_label = label.replace("'", "\\'").replace('"', '\\"')
 
-    th = st.session_state.theme
-    bg = "#2a2a2d" if th == "dark" else "#ffffff"
-    text_col = "#e8e6e1" if th == "dark" else "#1a1a1a"
+    if popup_type == "image":
+        # 이미지는 이미 base64
+        safe_b64 = b64_data[:500000]  # 안전 크기 제한
+        js_call = f"openPopup('image', '{safe_b64}', '{safe_label}')"
+    else:
+        # 텍스트는 base64로 인코딩해서 전달 (특수문자 안전)
+        text_bytes = b64_data[:8000].encode("utf-8")
+        text_b64 = base64.b64encode(text_bytes).decode("utf-8")
+        js_call = f"openPopup('pasted', '{text_b64}', '{safe_label}')"
 
-    with st.container():
-        # 닫기 버튼 — 컨테이너 내부 맨 위에 배치 (항상 팝업 내용과 함께)
-        close_col, title_col = st.columns([1, 8])
-        with close_col:
-            close_key = f"close_popup_{st.session_state.popup_type}"
-            if st.button("✕ 닫기", key=close_key):
-                st.session_state.popup_type = None
-                st.session_state.popup_content = None
-                st.session_state.popup_label = ""
-                st.rerun()
-        with title_col:
-            st.caption(f"{'🖼️' if st.session_state.popup_type == 'image' else '📋'} {st.session_state.popup_label}")
-
-        if st.session_state.popup_type == "image" and st.session_state.popup_content:
-            st.image(
-                f"data:image/png;base64,{st.session_state.popup_content}",
-                use_container_width=True,
-            )
-        elif st.session_state.popup_type == "pasted" and st.session_state.popup_content:
-            st.code(st.session_state.popup_content[:5000], language="text")
-
-        st.markdown("---")
+    # components.html로 JS 실행 (height=0으로 공간 차지 안 함)
+    components.html(
+        f"<script>window.parent.document.querySelectorAll && (function(){{ {js_call.replace('openPopup', 'window.parent.openPopup')} }})();</script>",
+        height=0,
+        scrolling=False,
+    )
 
 
 # ============================================================
@@ -926,33 +1032,23 @@ with st.sidebar:
 
 
 # ============================================================
-# 팝업 렌더링 (메인 최상단)
-# ============================================================
-render_popup()
-
-# ============================================================
 # 메인 레이아웃
-# FIX: Canvas가 열렸을 때 st.columns([54,46])으로 진짜 분리.
-#      Canvas가 닫혔을 때는 단일 컬럼 사용.
-#      HTML fixed overlay 방식 완전 제거 → 위젯이 div 밖에 렌더링되는 버그 해결.
 # ============================================================
 room = get_current_room()
 
-# FIX: active_persona_key 결정
-# 기존 대화방이 있으면 방에 저장된 페르소나 사용,
-# 새 대화(메시지 없음)이면 사이드바 선택값 사용
 if room and room.get("persona") and room["messages"]:
     active_persona_key = room["persona"]
 else:
-    # 새 대화 또는 메시지 없는 방: 사이드바 선택값
     active_persona_key = persona_key
 
-# 레이아웃 분기
 if st.session_state.canvas_open:
     main_col, canvas_col = st.columns([54, 46])
+    # FIX: Canvas 컬럼에 sticky 적용하는 JS 삽입
+    components.html(CANVAS_STICKY_JS, height=0, scrolling=False)
 else:
     main_col = st.container()
     canvas_col = None
+
 
 # ============================================================
 # 메인 채팅 영역
@@ -985,65 +1081,54 @@ with main_col:
                         if msg.get("has_file"):
                             fname = msg.get("file_name", "파일")
                             is_img = msg.get("file_is_image", False)
-                            fkey = msg.get("file_key", "")
+                            fkey  = msg.get("file_key", "")
 
                             if is_img and fkey:
-                                # FIX: 이미지 클릭 팝업 — 썸네일을 클릭하면 팝업이 뜨도록
-                                # Streamlit에서 이미지 자체에 onclick 불가 → 작은 버튼으로 대체하되
-                                # 썸네일 + 클릭 버튼을 나란히 배치 (돋보기/제거 버튼 없음)
-                                img_col, = st.columns([1])
-                                if st.button(
-                                    f"",
-                                    key=f"img_popup_{i}",
-                                    help=f"{fname} — 클릭하여 확대",
-                                ):
-                                    st.session_state.popup_type = "image"
-                                    st.session_state.popup_content = fkey
-                                    st.session_state.popup_label = fname
-                                    st.rerun()
+                                # FIX: 이미지 클릭 → JS 팝업 (st.rerun 없음)
                                 st.markdown(
-                                    f'<img src="data:image/png;base64,{fkey}" class="img-thumb" title="{fname} (클릭하여 확대)" />',
+                                    f'''<img src="data:image/png;base64,{fkey}" class="img-thumb"
+                                        title="{fname} — 클릭하여 확대"
+                                        onclick="openPopup('image','{fkey}','{fname}')"
+                                        style="cursor:pointer;" />''',
                                     unsafe_allow_html=True
                                 )
-
                             elif not is_img and fkey:
-                                if st.button(
-                                    f"📋 PASTED · {fname} · {len(fkey):,}자",
-                                    key=f"pasted_popup_{i}",
-                                    help="클릭하여 내용 보기"
-                                ):
-                                    st.session_state.popup_type = "pasted"
-                                    st.session_state.popup_content = fkey
-                                    st.session_state.popup_label = fname
-                                    st.rerun()
+                                fkey_safe = fkey[:200].replace("'", "\\'")
+                                b64_text = base64.b64encode(fkey[:8000].encode("utf-8")).decode("utf-8")
+                                st.markdown(
+                                    f'''<span class="pasted-chip"
+                                        onclick="openPopup('pasted','{b64_text}','{fname}')"
+                                        title="클릭하여 내용 보기">
+                                        📋 PASTED · {fname} · {len(fkey):,}자
+                                    </span>''',
+                                    unsafe_allow_html=True
+                                )
 
                         # 다중 파일
                         if msg.get("file_list"):
                             for fi, f_item in enumerate(msg["file_list"]):
+                                fname_fi = f_item.get("name", "파일")
                                 if f_item.get("is_image") and f_item.get("b64"):
-                                    if st.button(
-                                        f"🖼️ {f_item['name'][:20]}",
-                                        key=f"img_popup_{i}_{fi}",
-                                        help="클릭하여 이미지 확대"
-                                    ):
-                                        st.session_state.popup_type = "image"
-                                        st.session_state.popup_content = f_item["b64"]
-                                        st.session_state.popup_label = f_item["name"]
-                                        st.rerun()
+                                    b64v = f_item["b64"]
+                                    mtype = f_item.get("type", "image/png")
                                     st.markdown(
-                                        f'<img src="data:{f_item.get("type","image/png")};base64,{f_item["b64"]}" class="img-thumb" title="{f_item["name"]}" />',
+                                        f'''<img src="data:{mtype};base64,{b64v}" class="img-thumb"
+                                            title="{fname_fi} — 클릭하여 확대"
+                                            onclick="openPopup('image','{b64v}','{fname_fi}')"
+                                            style="cursor:pointer;" />''',
                                         unsafe_allow_html=True
                                     )
                                 elif not f_item.get("is_image") and f_item.get("b64"):
-                                    if st.button(
-                                        f"📋 PASTED · {f_item['name']} · {len(f_item['b64']):,}자",
-                                        key=f"pasted_popup_{i}_{fi}",
-                                        help="클릭하여 내용 보기"
-                                    ):
-                                        st.session_state.popup_type = "pasted"
-                                        st.session_state.popup_content = f_item["b64"]
-                                        st.session_state.popup_label = f_item["name"]
-                                        st.rerun()
+                                    b64v = f_item["b64"]
+                                    b64_text = base64.b64encode(b64v[:8000].encode("utf-8")).decode("utf-8")
+                                    st.markdown(
+                                        f'''<span class="pasted-chip"
+                                            onclick="openPopup('pasted','{b64_text}','{fname_fi}')"
+                                            title="클릭하여 내용 보기">
+                                            📋 PASTED · {fname_fi} · {len(b64v):,}자
+                                        </span>''',
+                                        unsafe_allow_html=True
+                                    )
 
                         display_text = msg.get("display", msg["content"])
                         if display_text and display_text.strip():
@@ -1054,7 +1139,6 @@ with main_col:
                             </div>""", unsafe_allow_html=True)
 
                     else:
-                        # FIX: 방에 저장된 페르소나 사용
                         msg_persona = room.get("persona", active_persona_key)
                         c_type, c_data = try_parse_ai_response(msg["content"], msg_persona)
 
@@ -1068,7 +1152,6 @@ with main_col:
                             if st.button(f"Canvas에서 열기 →", key=f"open_canvas_{i}"):
                                 open_canvas(c_type, c_data, label.replace("🧩 ", "").replace("🗺️ ", ""))
                                 st.rerun()
-
                         elif c_type == "code":
                             lang = c_data.get("language", "python") if isinstance(c_data, dict) else "python"
                             title = c_data.get("title", "코드") if isinstance(c_data, dict) else "코드"
@@ -1082,13 +1165,11 @@ with main_col:
                             if st.button(f"Canvas에서 전체 보기 →", key=f"open_code_cv_{i}"):
                                 open_canvas("code", c_data, "코드")
                                 st.rerun()
-
                         elif c_type == "doc":
                             st.markdown(msg["content"])
                             if st.button("📄 문서로 보기 →", key=f"open_doc_{i}"):
                                 open_canvas("doc", c_data, "문서")
                                 st.rerun()
-
                         else:
                             render_ai_message_content(msg["content"], i, msg_persona, room)
 
@@ -1106,12 +1187,13 @@ with main_col:
             streaming_placeholder = st.empty()
 
         # ── 파일 업로더 ──
+        # FIX: key를 upload_key 카운터로 동적 생성 → 전송 후 자동 리셋
         st.markdown("")
         uploaded_files = st.file_uploader(
             "파일 첨부",
             type=["png", "jpg", "jpeg", "gif", "webp", "txt", "py", "js", "ts", "csv", "md", "json"],
             label_visibility="collapsed",
-            key="file_upload",
+            key=f"file_upload_{st.session_state.upload_key}",
             accept_multiple_files=True,
         )
 
@@ -1143,51 +1225,43 @@ with main_col:
                             "api_content": {"type": "text", "text": f"[첨부 파일: {uf.name}]\n```\n{text_content}\n```"}
                         })
 
-        # FIX: 이미지 첨부 미리보기 — 썸네일 클릭 = 팝업, 돋보기/제거 버튼 없음
-        # 이미지 썸네일에 클릭 이벤트는 JS 없이 불가하므로,
-        # 썸네일을 버튼 역할로 표시하고 이름 버튼 클릭 시 팝업 오픈
+        # ── FIX: 첨부 파일 미리보기 — 이미지/텍스트 모두 JS 팝업으로 ──
         if st.session_state.pending_files:
-            st.caption(f"첨부됨 ({len(st.session_state.pending_files)}개) — 이미지는 클릭하여 확대, ✕로 제거")
+            st.caption(f"첨부됨 ({len(st.session_state.pending_files)}개) — 이미지/텍스트 클릭하여 미리보기")
             cols_per_row = 4
             pf_list = st.session_state.pending_files
             rows_count = (len(pf_list) + cols_per_row - 1) // cols_per_row
+
             for row_i in range(rows_count):
-                cols = st.columns(cols_per_row * 2)  # 썸네일 + 제거버튼 쌍
+                cols = st.columns(cols_per_row * 2)
                 for col_i in range(cols_per_row):
                     idx = row_i * cols_per_row + col_i
                     if idx >= len(pf_list):
                         break
                     pf = pf_list[idx]
-                    thumb_col = cols[col_i * 2]
-                    # 제거 버튼은 별도로 하단에 배치 (썸네일 아래)
-                    with thumb_col:
+                    with cols[col_i * 2]:
                         if pf["is_image"]:
-                            # 이미지: 썸네일을 클릭하면 팝업 (버튼 레이블에 이미지 이름)
-                            if st.button(
-                                f"🖼️ {pf['name'][:12]}",
-                                key=f"preview_img_{idx}",
-                                help=f"{pf['name']} — 클릭하여 확대"
-                            ):
-                                st.session_state.popup_type = "image"
-                                st.session_state.popup_content = pf["b64"]
-                                st.session_state.popup_label = pf["name"]
-                                st.rerun()
+                            fname_safe = pf['name'].replace("'", "\\'")
                             st.markdown(
-                                f'<img src="data:{pf["type"]};base64,{pf["b64"]}" class="img-thumb" title="{pf["name"]}" />',
+                                f'''<img src="data:{pf["type"]};base64,{pf["b64"]}" class="img-thumb"
+                                    title="{fname_safe} — 클릭하여 확대"
+                                    onclick="openPopup('image','{pf["b64"]}','{fname_safe}')"
+                                    style="cursor:pointer;" />''',
                                 unsafe_allow_html=True
                             )
                         else:
-                            if st.button(
-                                f"📋 {pf['name'][:12]}",
-                                key=f"preview_pasted_{idx}",
-                                help=pf["name"]
-                            ):
-                                st.session_state.popup_type = "pasted"
-                                st.session_state.popup_content = pf["b64"]
-                                st.session_state.popup_label = pf["name"]
-                                st.rerun()
+                            fname_safe = pf['name'].replace("'", "\\'")
+                            b64_text = base64.b64encode(pf["b64"][:8000].encode("utf-8")).decode("utf-8")
+                            st.markdown(
+                                f'''<span class="pasted-chip"
+                                    onclick="openPopup('pasted','{b64_text}','{fname_safe}')"
+                                    title="클릭하여 내용 보기">
+                                    📋 {pf['name'][:14]}
+                                </span>''',
+                                unsafe_allow_html=True
+                            )
                         # 제거 버튼
-                        if st.button("✕", key=f"remove_file_{idx}", help=f"{pf['name']} 제거"):
+                        if st.button("✕", key=f"remove_file_{idx}_{st.session_state.upload_key}", help=f"{pf['name']} 제거"):
                             st.session_state.pending_files.pop(idx)
                             st.rerun()
 
@@ -1219,7 +1293,7 @@ with main_col:
                 st.rerun()
 
         # ── 입력 폼 ──
-        is_quiz_mode = active_persona_key == "🧩 퀴즈 출제자"
+        is_quiz_mode    = active_persona_key == "🧩 퀴즈 출제자"
         is_mindmap_mode = active_persona_key == "🗺️ 마인드맵 메이커"
         if is_quiz_mode:
             ph = "퀴즈 주제를 입력하세요  ex) 한국사 조선시대"
@@ -1230,11 +1304,8 @@ with main_col:
 
         with st.form("chat_form", clear_on_submit=True):
             user_input = st.text_area(
-                "메시지",
-                placeholder=ph,
-                height=100,
-                label_visibility="collapsed",
-                key="user_input_area",
+                "메시지", placeholder=ph, height=100,
+                label_visibility="collapsed", key="user_input_area",
             )
             col_send, col_export, col_reset, col_spacer = st.columns([1, 1, 1, 7])
             with col_send:
@@ -1259,37 +1330,34 @@ with main_col:
             st.session_state.total_input_tokens -= room["total_input"]
             st.session_state.total_output_tokens -= room["total_output"]
             st.session_state.total_cost -= room["total_cost"]
-            room["messages"] = []
-            room["token_log"] = []
+            room["messages"]    = []
+            room["token_log"]   = []
             room["total_input"] = room["total_output"] = 0
-            room["total_cost"] = 0.0
-            room["title"] = "새 대화"
+            room["total_cost"]  = 0.0
+            room["title"]       = "새 대화"
             close_canvas()
             st.session_state.pending_files = []
+            st.session_state.upload_key   += 1  # FIX: 업로더 리셋
             save_room_to_sheet(st.session_state.username, room)
             save_user_stats(st.session_state.username)
             st.rerun()
 
-        # ── FIX: 메시지 전송 ──
+        # ── 메시지 전송 ──
         if submitted and user_input.strip():
             raw_input = user_input.strip()
 
-            # FIX: 첫 메시지일 때 방의 페르소나를 사이드바 선택값으로 설정
             if not room["messages"]:
                 title = raw_input
-                room["title"] = title[:28] + "…" if len(title) > 28 else title
-                room["persona"] = persona_key  # 사이드바에서 선택한 페르소나 저장
+                room["title"]  = title[:28] + "…" if len(title) > 28 else title
+                room["persona"] = persona_key
                 active_persona_key = persona_key
 
-            # FIX: PASTED 처리 — 정규식 기반으로 정확하게 분리
             plain_text_for_api, display_text, extra_pending = process_user_input(
                 raw_input, st.session_state.pending_files
             )
 
-            # pending_files + 자동 생성된 extra_pending 합치기
             all_pending = st.session_state.pending_files.copy() + extra_pending
 
-            # user 메시지 저장용 파일 리스트
             file_list_for_msg = [
                 {
                     "name": pf["name"],
@@ -1304,21 +1372,20 @@ with main_col:
                 "role": "user",
                 "content": plain_text_for_api,
                 "display": display_text,
-                "has_file": len(file_list_for_msg) == 1,
-                "file_name": file_list_for_msg[0]["name"] if len(file_list_for_msg) == 1 else "",
+                "has_file":      len(file_list_for_msg) == 1,
+                "file_name":     file_list_for_msg[0]["name"]     if len(file_list_for_msg) == 1 else "",
                 "file_is_image": file_list_for_msg[0]["is_image"] if len(file_list_for_msg) == 1 else False,
-                "file_key": file_list_for_msg[0]["b64"] if len(file_list_for_msg) == 1 else "",
-                "file_list": file_list_for_msg if len(file_list_for_msg) > 1 else [],
+                "file_key":      file_list_for_msg[0]["b64"]      if len(file_list_for_msg) == 1 else "",
+                "file_list":     file_list_for_msg if len(file_list_for_msg) > 1 else [],
             }
 
             room["messages"].append(user_msg)
 
             model_info = MODELS[model_name]
-            # FIX: 방에 저장된 페르소나 사용 (새 대화면 방금 설정된 값)
             current_persona_key = room.get("persona", active_persona_key)
-            current_persona = PERSONAS.get(current_persona_key, PERSONAS["🔬 학습 도우미"])
-            context_messages = room["messages"][-20:]
-            api_messages = []
+            current_persona     = PERSONAS.get(current_persona_key, PERSONAS["🔬 학습 도우미"])
+            context_messages    = room["messages"][-20:]
+            api_messages        = []
 
             for m in context_messages:
                 if m["role"] == "user":
@@ -1337,10 +1404,10 @@ with main_col:
                 st.markdown('<div class="msg-ai"><div class="msg-role msg-role-ai">Claude</div></div>', unsafe_allow_html=True)
                 stream_out = st.empty()
 
-            client = anthropic.Anthropic(api_key=API_KEY)
+            client     = anthropic.Anthropic(api_key=API_KEY)
             start_time = time.time()
             full_answer = ""
-            MAX_TOKENS = model_info.get("max_tokens", 32000)
+            MAX_TOKENS  = model_info.get("max_tokens", 32000)
 
             try:
                 with client.messages.stream(
@@ -1356,22 +1423,22 @@ with main_col:
                 stream_out.empty()
                 streaming_placeholder.empty()
 
-                elapsed = time.time() - start_time
-                final_msg = stream.get_final_message()
+                elapsed      = time.time() - start_time
+                final_msg    = stream.get_final_message()
                 input_tokens = final_msg.usage.input_tokens
-                output_tokens = final_msg.usage.output_tokens
-                input_cost = (input_tokens / 1_000_000) * model_info["input_price"]
-                output_cost = (output_tokens / 1_000_000) * model_info["output_price"]
-                turn_cost = input_cost + output_cost
+                output_tokens= final_msg.usage.output_tokens
+                input_cost   = (input_tokens  / 1_000_000) * model_info["input_price"]
+                output_cost  = (output_tokens / 1_000_000) * model_info["output_price"]
+                turn_cost    = input_cost + output_cost
 
                 room["messages"].append({"role": "assistant", "content": full_answer})
                 room["token_log"].append({"input": input_tokens, "output": output_tokens, "cost": turn_cost, "elapsed": elapsed})
-                room["total_input"] += input_tokens
+                room["total_input"]  += input_tokens
                 room["total_output"] += output_tokens
-                room["total_cost"] += turn_cost
-                st.session_state.total_input_tokens += input_tokens
+                room["total_cost"]   += turn_cost
+                st.session_state.total_input_tokens  += input_tokens
                 st.session_state.total_output_tokens += output_tokens
-                st.session_state.total_cost += turn_cost
+                st.session_state.total_cost          += turn_cost
 
                 # Canvas 자동 열기
                 c_type, c_data = try_parse_ai_response(full_answer, current_persona_key)
@@ -1379,7 +1446,9 @@ with main_col:
                     labels = {"quiz": "퀴즈", "code": "코드", "mindmap": "마인드맵", "doc": "문서"}
                     open_canvas(c_type, c_data, labels.get(c_type, "Canvas"))
 
+                # FIX: 전송 성공 → pending 초기화 + 업로더 키 증가
                 st.session_state.pending_files = []
+                st.session_state.upload_key   += 1
 
                 save_room_to_sheet(st.session_state.username, room)
                 save_user_stats(st.session_state.username)
@@ -1400,17 +1469,17 @@ with main_col:
         if room and room["token_log"]:
             with st.expander("토큰 사용량", expanded=False):
                 import plotly.graph_objects as go
-                turns = [f"#{i+1}" for i in range(len(room["token_log"]))]
-                inputs = [t["input"] for t in room["token_log"]]
+                turns   = [f"#{i+1}" for i in range(len(room["token_log"]))]
+                inputs  = [t["input"]  for t in room["token_log"]]
                 outputs = [t["output"] for t in room["token_log"]]
 
                 is_dark = st.session_state.theme == "dark"
-                bg = "rgba(0,0,0,0)"
-                fc = "#888"
-                gc = "rgba(255,255,255,0.05)" if is_dark else "rgba(0,0,0,0.05)"
+                bg  = "rgba(0,0,0,0)"
+                fc  = "#888"
+                gc  = "rgba(255,255,255,0.05)" if is_dark else "rgba(0,0,0,0.05)"
 
                 fig = go.Figure()
-                fig.add_trace(go.Bar(name="입력", x=turns, y=inputs, marker_color="rgba(150,150,150,0.6)"))
+                fig.add_trace(go.Bar(name="입력", x=turns, y=inputs,  marker_color="rgba(150,150,150,0.6)"))
                 fig.add_trace(go.Bar(name="출력", x=turns, y=outputs, marker_color="rgba(100,100,100,0.8)"))
                 fig.update_layout(
                     barmode="group", plot_bgcolor=bg, paper_bgcolor=bg,
@@ -1422,22 +1491,19 @@ with main_col:
                 st.plotly_chart(fig, use_container_width=True)
 
                 sc1, sc2, sc3, sc4 = st.columns(4)
-                sc1.metric("총 입력", f"{room['total_input']:,}")
-                sc2.metric("총 출력", f"{room['total_output']:,}")
-                sc3.metric("비용", f"${room['total_cost']:.4f}")
-                sc4.metric("₩", f"{int(room['total_cost'] * 1400):,}")
+                sc1.metric("총 입력",  f"{room['total_input']:,}")
+                sc2.metric("총 출력",  f"{room['total_output']:,}")
+                sc3.metric("비용",     f"${room['total_cost']:.4f}")
+                sc4.metric("₩",        f"{int(room['total_cost'] * 1400):,}")
 
 
 # ============================================================
 # Canvas 영역
-# FIX: st.columns([54,46])의 두 번째 컬럼에 렌더링.
-#      HTML fixed overlay 완전 제거.
-#      닫기 버튼도 동일한 컬럼 내에 배치 → 항상 Canvas 안에 표시.
 # ============================================================
 if st.session_state.canvas_open and canvas_col is not None:
-    th = st.session_state.theme
+    th       = st.session_state.theme
     text_col = "#e8e6e1" if th == "dark" else "#1a1a1a"
-    sub_col = "#555" if th == "dark" else "#888"
+    sub_col  = "#555"    if th == "dark" else "#888"
     border_col = "rgba(255,255,255,0.08)" if th == "dark" else "rgba(0,0,0,0.08)"
 
     ct = st.session_state.canvas_type
@@ -1445,7 +1511,6 @@ if st.session_state.canvas_open and canvas_col is not None:
     title_disp = st.session_state.canvas_title if cc is not None else "Canvas"
 
     with canvas_col:
-        # 헤더 + 닫기 버튼 (같은 컬럼 안에 있으므로 항상 Canvas 내에 표시)
         ch1, ch2 = st.columns([4, 1])
         with ch1:
             st.markdown(f"**{title_disp}**")
@@ -1460,11 +1525,11 @@ if st.session_state.canvas_open and canvas_col is not None:
             persona_info = PERSONAS.get(active_persona_key, {})
             cv_type_hint = persona_info.get("canvas_type", None)
             hint_map = {
-                "quiz": "🧩 퀴즈 출제자 페르소나로 대화하면\n퀴즈가 여기에 표시됩니다.",
-                "code": "💻 코딩 멘토 페르소나로 대화하면\n코드가 여기에 표시됩니다.",
+                "quiz":    "🧩 퀴즈 출제자 페르소나로 대화하면\n퀴즈가 여기에 표시됩니다.",
+                "code":    "💻 코딩 멘토 페르소나로 대화하면\n코드가 여기에 표시됩니다.",
                 "mindmap": "🗺️ 마인드맵 메이커 페르소나로 대화하면\n마인드맵이 여기에 표시됩니다.",
-                "doc": "📄 대화 내용이 문서로\n여기에 표시됩니다.",
-                None: "💬 대화를 시작하면\nCanvas 내용이 여기에 표시됩니다.",
+                "doc":     "📄 대화 내용이 문서로\n여기에 표시됩니다.",
+                None:      "💬 대화를 시작하면\nCanvas 내용이 여기에 표시됩니다.",
             }
             hint = hint_map.get(cv_type_hint, hint_map[None])
             st.markdown(
@@ -1496,22 +1561,22 @@ if st.session_state.canvas_open and canvas_col is not None:
                         <div style="font-size:0.85rem; color:{sub_col};">{correct_count}/{total_q} 정답</div>
                     </div>""", unsafe_allow_html=True)
                     if st.button("다시 풀기", use_container_width=True, key="retake_quiz"):
-                        st.session_state.quiz_answers = {}
+                        st.session_state.quiz_answers  = {}
                         st.session_state.quiz_submitted = False
                         st.rerun()
                 else:
                     st.caption(f"{len(st.session_state.quiz_answers)}/{total_q} 선택 완료")
 
                 for qi, q in enumerate(quiz_list):
-                    correct_idx = int(q["answer"])
-                    user_ans = st.session_state.quiz_answers.get(qi)
+                    correct_idx   = int(q["answer"])
+                    user_ans      = st.session_state.quiz_answers.get(qi)
                     submitted_quiz = st.session_state.quiz_submitted
                     option_labels = ["A", "B", "C", "D"]
 
                     st.markdown(f'<div class="quiz-q">Q{qi+1}. {q["question"]}</div>', unsafe_allow_html=True)
 
                     for oi, opt in enumerate(q["options"]):
-                        label = f"{option_labels[oi]}. {opt}"
+                        label   = f"{option_labels[oi]}. {opt}"
                         btn_key = f"cv_q_{qi}_{oi}"
                         if submitted_quiz:
                             if oi == correct_idx:
@@ -1542,8 +1607,8 @@ if st.session_state.canvas_open and canvas_col is not None:
             if not isinstance(code_data, dict):
                 st.error("코드 데이터가 올바르지 않습니다.")
             else:
-                lang = code_data.get("language", "python")
-                title = code_data.get("title", "코드")
+                lang        = code_data.get("language", "python")
+                title       = code_data.get("title", "코드")
                 explanation = code_data.get("explanation", "")
 
                 st.markdown(f"**{title}** · `{lang.upper()}`")
@@ -1575,7 +1640,7 @@ if st.session_state.canvas_open and canvas_col is not None:
         # ── 문서 ──
         elif ct == "doc":
             doc_content = cc.get("content", "") if isinstance(cc, dict) else str(cc)
-            doc_title = cc.get("title", "문서") if isinstance(cc, dict) else "문서"
+            doc_title   = cc.get("title", "문서") if isinstance(cc, dict) else "문서"
             st.markdown(f"### {doc_title}")
             st.markdown("---")
 
